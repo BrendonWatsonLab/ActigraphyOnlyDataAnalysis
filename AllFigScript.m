@@ -1,0 +1,1377 @@
+% UNIFIED MATLAB SCRIPT FOR MANUSCRIPT FIGURES 3, 4, & 5
+%
+% Date: Nov 10, 2025
+% Author: Noah Muscat
+%
+% Description:
+% This master script combines the logic from three separate scripts to
+% generate all components for Figures 3, 4, and 5. It centralizes the
+% configuration, loads and processes the data only once, and then
+% generates each figure in a clearly defined section. All figures are
+% saved as PNG files.
+%
+% Script Sections:
+% 1. Configuration & Setup
+% 2. Load and Preprocess Data
+% 3. Generate Figure 3 Components
+% 4. Generate Figure 4 Components
+% 5. Generate Figure 5 Components
+% 6. Helper Functions
+%
+% ASSUMPTIONS: violinplot.m is on the MATLAB path.
+% ---------------------------------------------------------------------
+%% --- 1. Configuration & Setup ---
+clear; clc; close all; % Start fresh
+% --- File and Path Parameters ---
+filename = '/Users/noahmuscat/University of Michigan Dropbox/Noah Muscat/ActivityAnalysis/ActigraphyOnly/Unified_AO1to12_Combined_Data.csv';
+savePath_Fig3 = '/Users/noahmuscat/Desktop/WatsonLab/AOPaper/Figure3Plots';
+savePath_Fig4 = '/Users/noahmuscat/Desktop/WatsonLab/AOPaper/Figure4Plots';
+savePath_Fig5 = '/Users/noahmuscat/Desktop/WatsonLab/AOPaper/Figure5Plots';
+% --- Master list of Activity Metrics to Plot ---
+activity_metrics_to_plot = {'SelectedPixelDifference', 'NormalizedActivity'};
+metric_suffixes = {'PixelDiff', 'Normalized'};
+metric_ylabels = {'Activity (Pixel Difference)', 'Normalized Activity'};
+pixelDiffVar = 'SelectedPixelDifference';
+normalizedActivityVar = 'NormalizedActivity';
+% --- Key Data Column Names ---
+animalVar = 'Animal';
+conditionVar = 'Condition';
+relativeDayVar = 'RelativeDay';
+timeVarZT = 'DateZT';
+ztHourVar = 'ZT_Time';
+% --- Analysis Parameters ---
+samplingIntervalMinutes = 5;
+hoursPerDay = 24;
+daysForPoolingFig3AB = 14;
+targetConditionFig3AB = '300Lux';
+ztLightsOnStart = 0; ztLightsOnEnd = 11;
+ztLightsOffStart = 12; ztLightsOffEnd = 23;
+% --- Condition Ordering ---
+allConditions = {'300Lux', '1000Lux', 'FullDark', '300LuxEnd'};
+% --- Animal Grouping ---
+allAnimals = string({'AO1', 'AO2', 'AO3', 'AO4', 'AO5', 'AO6', 'AO7', 'AO8', 'AO9', 'AO10', 'AO11', 'AO12'});
+maleAnimals = string({'AO1', 'AO2', 'AO3', 'AO7', 'AO9', 'AO12'});
+femaleAnimals = string({'AO4', 'AO5', 'AO6', 'AO8', 'AO10', 'AO11'});
+fourCondAnimals = string({'AO5', 'AO6', 'AO7', 'AO8', 'AO9','AO10','AO11','AO12'});
+% --- Color Definitions ---
+maleColor = [0.2 0.5470 0.8410];
+femaleColor = [0.9500 0.4250 0.1980];
+grayColor = [0.6 0.6 0.6];
+% --- Setup Save Directories ---
+all_paths = {savePath_Fig3, savePath_Fig4, savePath_Fig5};
+for p_idx = 1:length(all_paths)
+    current_path = all_paths{p_idx};
+    disp(['Checking save directory: ', current_path]);
+    if ~isfolder(current_path)
+        try mkdir(current_path); disp('Save directory created.');
+        catch ME, error('SaveDirErr:CouldNotCreate', 'Could not create save directory "%s". Err: %s', current_path, ME.message); end
+    end
+end
+%% --- 2. Load and Preprocess Data ---
+disp(['Loading data from: ', filename]);
+try
+    opts = detectImportOptions(filename);
+    opts.VariableNamingRule = 'preserve';
+    expectedVars = {pixelDiffVar, normalizedActivityVar, animalVar, conditionVar, relativeDayVar, timeVarZT, ztHourVar};
+    if ~all(ismember(expectedVars, opts.VariableNames)), error('LoadErr:MissingColumn', 'One or more expected columns not found in %s.', filename); end
+    
+    opts = setvartype(opts, {pixelDiffVar, normalizedActivityVar, relativeDayVar, ztHourVar}, 'double');
+    opts = setvartype(opts, {animalVar, conditionVar}, 'string');
+    opts = setvartype(opts, timeVarZT, 'datetime');
+    opts = setvaropts(opts, timeVarZT, 'InputFormat', 'dd-MMM-yyyy HH:mm:ss');
+    
+    dataTable = readtable(filename, opts);
+    disp('Data loaded successfully.');
+catch ME_load, error('LoadErr:FileProcessing', 'Failed to load/parse CSV "%s". Err: %s', filename, ME_load.message); end
+disp('Starting data preprocessing...');
+dataTable = sortrows(dataTable, timeVarZT);
+dataTable.DayOfCondition = floor(dataTable.(relativeDayVar));
+colsToClean = {pixelDiffVar, normalizedActivityVar, timeVarZT, relativeDayVar, ztHourVar, animalVar, conditionVar, 'DayOfCondition'};
+nanRowsFilter = false(height(dataTable), 1);
+for c_idx = 1:length(colsToClean)
+    colData = dataTable.(colsToClean{c_idx});
+    if isdatetime(colData), nanRowsFilter = nanRowsFilter | isnat(colData);
+    elseif isnumeric(colData), nanRowsFilter = nanRowsFilter | isnan(colData);
+    elseif isstring(colData), nanRowsFilter = nanRowsFilter | ismissing(colData);
+    end
+end
+if any(nanRowsFilter), fprintf('%d rows removed due to missing values.\n', sum(nanRowsFilter)); dataTable(nanRowsFilter, :) = []; end
+if isempty(dataTable), error('PreprocErr:NoData', 'No valid data after NaN removal.'); end
+dataTable = dataTable(ismember(dataTable.(animalVar), allAnimals), :);
+if isempty(dataTable), error('PreprocErr:NoAnimalData', 'No data found for the animals specified in `allAnimals`.'); end
+dataTable.Condition = categorical(dataTable.Condition, allConditions, 'Ordinal', true);
+dataTable.Sex = categorical(ismember(dataTable.(animalVar), maleAnimals), [0, 1], {'Female', 'Male'});
+dataTable.LightPeriod = categorical((dataTable.(ztHourVar) >= ztLightsOnStart & dataTable.(ztHourVar) <= ztLightsOnEnd), [0, 1], {'Off', 'On'});
+disp('Data preprocessing complete.');
+%% --- 3. GENERATE FIGURE 3 COMPONENTS ---
+disp('=====================================================');
+disp('--- Starting Generation of Figure 3 Components ---');
+disp('=====================================================');
+initialBaselineData = [];
+for i_an = 1:length(allAnimals)
+    currentAnimalID = allAnimals(i_an);
+    animalData = dataTable(dataTable.(animalVar) == currentAnimalID, :);
+    animalConds = unique(animalData.Condition, 'stable');
+    if ~isempty(animalConds) && animalConds(1) == string(targetConditionFig3AB)
+        animalTargetCondData = animalData(animalData.Condition == string(targetConditionFig3AB), :);
+        if ~isempty(animalTargetCondData)
+            uniqueDays = unique(animalTargetCondData.DayOfCondition);
+            if isempty(uniqueDays), continue; end
+            daysToKeep = uniqueDays(max(1, end-daysForPoolingFig3AB+1):end);
+            finalDataForPooling = animalTargetCondData(ismember(animalTargetCondData.DayOfCondition, daysToKeep), :);
+            initialBaselineData = [initialBaselineData; finalDataForPooling];
+        end
+    end
+end
+if isempty(initialBaselineData), error('DataErr:Fig3_NoBaseline', 'No baseline data found for Figure 3.'); end
+for met_idx = 1:length(activity_metrics_to_plot)
+    current_metric_var = activity_metrics_to_plot{met_idx};
+    current_metric_suffix = metric_suffixes{met_idx};
+    current_metric_ylabel = metric_ylabels{met_idx};
+    fprintf('\n--- Generating Figure 3 components for metric: %s ---\n', current_metric_var);
+    
+    %% FIG 3A: Averaged Actogram
+    disp('--- Starting Figure 3A: Averaged Actogram ---');
+    try
+        alignedAnimalData = NaN(daysForPoolingFig3AB, hoursPerDay, length(allAnimals));
+        for i_an = 1:length(allAnimals)
+            currentAnimalID = allAnimals(i_an);
+            animalData = dataTable(dataTable.(animalVar) == currentAnimalID & dataTable.Condition == string(targetConditionFig3AB), :);
+            if isempty(animalData), continue; end
+            uniqueDays = unique(animalData.DayOfCondition);
+            daysToKeep = uniqueDays(max(1, end-daysForPoolingFig3AB+1):end);
+            for i_day_idx = 1:min(length(daysToKeep), daysForPoolingFig3AB)
+                dayData = animalData(animalData.DayOfCondition == daysToKeep(i_day_idx), :);
+                if ~isempty(dayData)
+                    hourlyMeans = groupsummary(dayData, ztHourVar, 'mean', current_metric_var);
+                    [lia, locb] = ismember(hourlyMeans.(ztHourVar), (0:23)');
+                    alignedAnimalData(i_day_idx, locb(lia), i_an) = hourlyMeans.(['mean_', current_metric_var])(lia);
+                end
+            end
+        end
+        actogramMatrix = mean(alignedAnimalData, 3, 'omitnan');
+        
+        hFig3A_current = figure('Name', sprintf('Fig 3A: Averaged Actogram (%s)', current_metric_suffix), 'Visible', 'off', 'Color', 'w');
+        ax3A = axes('Parent', hFig3A_current);
+        imagesc(ax3A, (0:23), (1:daysForPoolingFig3AB), actogramMatrix); colormap(ax3A, 'parula'); ax3A.YDir = 'reverse';
+        xlabel(ax3A, 'ZT Hour'); ylabel(ax3A, sprintf('Day of %s (Aligned)', targetConditionFig3AB));
+        ylim(ax3A,[0.5, daysForPoolingFig3AB + 0.5]); xticks(ax3A, [0,6,12,18,23]); yticks(ax3A, 2:2:daysForPoolingFig3AB);
+        title(ax3A,sprintf('Averaged Actogram (%s)\nLast %d days of %s',strrep(current_metric_suffix,'_',' '),daysForPoolingFig3AB,targetConditionFig3AB));
+        cb3A = colorbar(ax3A); ylabel(cb3A, current_metric_ylabel);
+        hold(ax3A,'on'); patch(ax3A,[ztLightsOffStart-0.5, ztLightsOffEnd+0.5, ztLightsOffEnd+0.5, ztLightsOffStart-0.5],[0.5,0.5,daysForPoolingFig3AB+0.5,daysForPoolingFig3AB+0.5],[0.85 0.85 0.85],'FaceAlpha',0.25,'EdgeColor','none','HandleVisibility','off'); hold(ax3A,'off');
+        set(ax3A,'Layer','top', 'Position', [0.13 0.11 0.7 0.815]); % Add margins for whitespace
+        fig_filename = fullfile(savePath_Fig3, sprintf('Figure3A_Actogram_Averaged_%s.png', current_metric_suffix));
+        exportgraphics(hFig3A_current, fig_filename); disp(['Saved: ', fig_filename]); close(hFig3A_current);
+    catch ME_3A, warning('ErrGen:Fig3A','Error Fig 3A (%s): %s', current_metric_suffix, ME_3A.message); end
+    
+    %% FIG 3B: Pooled Periodogram
+    disp('--- Starting Figure 3B: Pooled Periodogram ---');
+    try
+        hFig3B_current = figure('Name', sprintf('Fig 3B: Periodogram (%s)', current_metric_suffix), 'Visible', 'off', 'Color', 'w');
+        ax3B = axes('Parent', hFig3B_current);
+        tempDataForPerio = initialBaselineData;
+        tempDataForPerio.RoundedTime5Min = dateshift(tempDataForPerio.(timeVarZT),'start','minute',samplingIntervalMinutes);
+        pooled5MinStats = groupsummary(tempDataForPerio,'RoundedTime5Min','mean',current_metric_var);
+        activitySignal = pooled5MinStats.(['mean_',current_metric_var]);
+        timeSignalHours = hours(pooled5MinStats.RoundedTime5Min - pooled5MinStats.RoundedTime5Min(1));
+        validIdx = ~isnan(activitySignal); activitySignal = activitySignal(validIdx); timeSignalHours = timeSignalHours(validIdx);
+        periodogramRangeHours = [0.5, 48];
+        [pxx, f_hz] = plomb(activitySignal, timeSignalHours, 1/periodogramRangeHours(1), 4);
+        periodHours = 1 ./ f_hz;
+        validDataIdx = isfinite(periodHours) & isfinite(pxx);
+        periodHours = periodHours(validDataIdx); pxx = pxx(validDataIdx);
+        displayRangeIdx = periodHours >= periodogramRangeHours(1) & periodHours <= periodogramRangeHours(2);
+        [periodHours, sortIdx] = sort(periodHours(displayRangeIdx)); pxx = pxx(displayRangeIdx); pxx = pxx(sortIdx);
+        plot(ax3B,periodHours,pxx,'LineWidth',1.5,'Color','k');
+        xlabel(ax3B,'Period (hours)'); ylabel(ax3B,'Power');
+        title(ax3B,sprintf('Periodogram (%s)\nLast %dd %s',current_metric_suffix,daysForPoolingFig3AB,targetConditionFig3AB));
+        grid(ax3B,'on'); xlim(ax3B,periodogramRangeHours);
+        set(ax3B, 'Position', [0.13 0.11 0.775 0.75]); % Add margins for whitespace
+        fig_filename = fullfile(savePath_Fig3, sprintf('Figure3B_Periodogram_Last14d_%s.png', current_metric_suffix));
+        exportgraphics(hFig3B_current, fig_filename); disp(['Saved: ', fig_filename]); close(hFig3B_current);
+    catch ME_3B, warning('ErrGen:Fig3B','Error Fig 3B (%s): %s',current_metric_suffix, ME_3B.message); end
+    
+    %% FIG 3C: Pooled 24-Hour Activity Profile
+    disp('--- Starting Figure 3C: Pooled 24-Hour Profile ---');
+    try
+        hFig3C_current = figure('Name', sprintf('Fig 3C: 24h Profile (%s)', current_metric_suffix), 'Visible', 'off', 'Color', 'w');
+        ax3C = axes('Parent', hFig3C_current);
+        hourlyStats_3C = groupsummary(initialBaselineData, ztHourVar, {'mean','std','nnz'}, current_metric_var);
+        hourlyStats_3C = sortrows(hourlyStats_3C, ztHourVar);
+        meanAct_3C = hourlyStats_3C.(['mean_',current_metric_var]);
+        semAct_3C  = hourlyStats_3C.(['std_',current_metric_var]) ./ sqrt(hourlyStats_3C.(['nnz_',current_metric_var]));
+        errorbar(ax3C,hourlyStats_3C.(ztHourVar),meanAct_3C,semAct_3C,'o-','LineWidth',1.5,'MarkerSize',4,'CapSize',3,'Color',[0.2 0.2 0.2]);
+        hold(ax3C,'on');
+        yl3C=ylim(ax3C); patch(ax3C,[ztLightsOffStart-0.5, ztLightsOffEnd+0.5, ztLightsOffEnd+0.5, ztLightsOffStart-0.5], [yl3C(1) yl3C(1) yl3C(2) yl3C(2)], [0.85 0.85 0.85],'FaceAlpha',0.25,'EdgeColor','none');
+        if strcmp(current_metric_var, normalizedActivityVar), plot(ax3C,xlim(ax3C),[0 0],'k--'); end
+        hold(ax3C,'off');
+        xlabel(ax3C,'ZT Hour'); ylabel(ax3C,['Mean ',current_metric_ylabel]);
+        title(ax3C,sprintf('Pooled 24h Activity Profile (%s - Baseline)',current_metric_suffix));
+        xticks(ax3C,0:3:23); xlim(ax3C,[-0.5,23.5]); grid(ax3C,'on');
+        set(ax3C, 'Position', [0.13 0.11 0.775 0.815]); % Add margins for whitespace
+        fig_filename = fullfile(savePath_Fig3, sprintf('Figure3C_Profile_Baseline_%s.png', current_metric_suffix));
+        exportgraphics(hFig3C_current, fig_filename); disp(['Saved: ', fig_filename]); close(hFig3C_current);
+    catch ME_3C, warning('ErrGen:Fig3C','Error Fig 3C (%s): %s',current_metric_suffix, ME_3C.message); end
+    
+    %% FIG 3D: Diurnality Quantification (Violin Plots) (WITH STATS)
+    disp('--- Starting Figure 3D: Diurnality Violins ---');
+    fprintf('\n--- STATS: Figure 3D (Last 14 days, Bonferroni Corrected) for %s ---\n', current_metric_suffix);
+    try
+        if ~exist('violinplot.m','file'),error('ViolinPlotNotFound:Fig3D','violinplot.m not found.');end
+        hFig3D_current = figure('Name', sprintf('Fig 3D: Diurnality Violins (%s)', current_metric_suffix), 'Visible', 'off', 'Color', 'w');
+        ax3D = axes('Parent', hFig3D_current); hold(ax3D, 'on');
+        time_windows = {[0 23], [0 11], [3 9], [12 23], [15 21], [10 14], [22 2]};
+        window_labels = {'Full Day', 'Bright (0-11)', 'Mid-Bright (3-9)', 'Dark (12-23)', 'Mid-Dark (15-21)', 'Bright-Dark (10-14)', 'Dark-Bright (22-2)'};
+        animal_window_means_list = [];
+        baselineAnimals = unique(initialBaselineData.Animal);
+        for i_an = 1:length(baselineAnimals)
+            T_animal = initialBaselineData(initialBaselineData.Animal == baselineAnimals(i_an), :);
+            if isempty(T_animal), continue; end
+            for i_win = 1:length(time_windows)
+                window = time_windows{i_win};
+                if window(1) <= window(2), idx_time = T_animal.(ztHourVar) >= window(1) & T_animal.(ztHourVar) <= window(2);
+                else, idx_time = T_animal.(ztHourVar) >= window(1) | T_animal.(ztHourVar) <= window(2); end
+                mean_act_this_win = mean(T_animal.(current_metric_var)(idx_time), 'omitnan');
+                animal_window_means_list = [animal_window_means_list; {baselineAnimals(i_an), window_labels{i_win}, T_animal.Sex(1), mean_act_this_win}];
+            end
+        end
+        plotTable_3D = cell2table(animal_window_means_list, 'VariableNames', {'Animal', 'Window', 'Sex', 'MeanActivity'});
+        plotTable_3D.Window = categorical(plotTable_3D.Window, window_labels);
+        violinplot(plotTable_3D.MeanActivity, plotTable_3D.Window, 'Parent', ax3D, 'GroupOrder', window_labels, 'ShowData', false, 'ViolinColor', grayColor);
+        jitterAmount = 0.15;
+        for i_win = 1:length(window_labels)
+            window_data = plotTable_3D(plotTable_3D.Window == window_labels{i_win}, :);
+            x_scatter = i_win + (rand(height(window_data), 1) - 0.5) * jitterAmount;
+            male_idx = window_data.Sex == 'Male';
+            scatter(ax3D, x_scatter(male_idx), window_data.MeanActivity(male_idx), 40, maleColor, 'filled', 'MarkerFaceAlpha', 0.9);
+            scatter(ax3D, x_scatter(~male_idx), window_data.MeanActivity(~male_idx), 40, femaleColor, 'filled', 'MarkerFaceAlpha', 0.9);
+        end
+        
+        num_tests = 3;
+        corrected_alpha = 0.05 / num_tests;
+        fprintf('Applying Bonferroni correction for %d tests. New alpha = %.4f\n', num_tests, corrected_alpha);
+        
+        y_max = max(plotTable_3D.MeanActivity, [], 'omitnan'); if isempty(y_max) || isnan(y_max), y_max=1; end
+        current_ylim = ylim(ax3D);
+        y_range = diff(current_ylim); if y_range==0 || isnan(y_range), y_range=y_max; end
+        
+        bright_data = plotTable_3D(plotTable_3D.Window == 'Bright (0-11)', :);
+        dark_data = plotTable_3D(plotTable_3D.Window == 'Dark (12-23)', :);
+        stats_table = outerjoin(bright_data(:,{'Animal', 'MeanActivity'}), dark_data(:,{'Animal', 'MeanActivity'}), 'Keys','Animal', 'MergeKeys', true);
+        stats_table.Properties.VariableNames(2:3) = {'Bright', 'Dark'};
+        [~, p_bvd] = ttest(stats_table.Bright, stats_table.Dark);
+        fprintf('Paired T-Test (Bright vs Dark): p = %.4f\n', p_bvd);
+        y_pos1 = current_ylim(2) + 0.05*y_range;
+        plot_sig_bar(ax3D, [2, 4], p_bvd, y_pos1, corrected_alpha); 
+        
+        midbright_data = plotTable_3D(plotTable_3D.Window == 'Mid-Bright (3-9)', :);
+        middark_data = plotTable_3D(plotTable_3D.Window == 'Mid-Dark (15-21)', :);
+        stats_table_mid = outerjoin(midbright_data(:,{'Animal', 'MeanActivity'}), middark_data(:,{'Animal', 'MeanActivity'}), 'Keys','Animal', 'MergeKeys', true);
+        stats_table_mid.Properties.VariableNames(2:3) = {'MidBright', 'MidDark'};
+        [~, p_mbvmd] = ttest(stats_table_mid.MidBright, stats_table_mid.MidDark);
+        fprintf('Paired T-Test (Mid-Bright vs Mid-Dark): p = %.4f\n', p_mbvmd);
+        y_pos2 = y_pos1 + 0.15*y_range;
+        plot_sig_bar(ax3D, [3, 5], p_mbvmd, y_pos2, corrected_alpha);
+        
+        transition_data = plotTable_3D(plotTable_3D.Window == 'Bright-Dark (10-14)', :);
+        fullday_data = plotTable_3D(plotTable_3D.Window == 'Full Day', :);
+        stats_table_trans = outerjoin(transition_data(:,{'Animal', 'MeanActivity'}), fullday_data(:,{'Animal', 'MeanActivity'}), 'Keys','Animal', 'MergeKeys', true);
+        stats_table_trans.Properties.VariableNames(2:3) = {'Transition', 'FullDay'};
+        [~, p_tvfd] = ttest(stats_table_trans.Transition, stats_table_trans.FullDay);
+        fprintf('Paired T-Test (Transition vs Full Day): p = %.4f\n', p_tvfd);
+        y_pos3 = y_pos2 + 0.15*y_range;
+        plot_sig_bar(ax3D, [1, 6], p_tvfd, y_pos3, corrected_alpha);
+        
+        ylim(ax3D, [current_ylim(1), y_pos3 + 0.1*y_range]);
+        
+        xticklabels(ax3D, window_labels); xtickangle(ax3D, 45);
+        ylabel(ax3D,['Mean ',current_metric_ylabel]);
+        title(ax3D,sprintf('Diurnality (Last 14d Baseline - 300Lux)\n%s', strrep(current_metric_suffix,'_',' ')));
+        if strcmp(current_metric_var, normalizedActivityVar), line(ax3D, xlim(ax3D), [0 0], 'Color', 'k', 'LineStyle', ':'); end
+        set(ax3D, 'Position', [0.13 0.2 0.775 0.7]); 
+        drawnow;
+        fig_filename = fullfile(savePath_Fig3, sprintf('Figure3D_Violins_PooledSex_CorrectedStats_%s.png', current_metric_suffix));
+        exportgraphics(hFig3D_current, fig_filename); disp(['Saved: ', fig_filename]); close(hFig3D_current);
+    catch ME_3D, warning('ErrGen:Fig3D','Error Fig 3D (%s): %s', current_metric_suffix, ME_3D.message); end
+    
+    %% FIG 3D (Extended): Weekly Breakdown
+    disp('--- Starting Figure 3D Weekly Breakdown ---');
+    baselineDataOnly = dataTable(dataTable.Condition == targetConditionFig3AB, :);
+    max_day = max(baselineDataOnly.DayOfCondition);
+    num_weeks = floor((max_day+1)/7);
+    for i_week = 1:num_weeks
+        start_day = (i_week-1) * 7;
+        end_day = i_week * 7 - 1;
+        
+        weekly_data = baselineDataOnly(baselineDataOnly.DayOfCondition >= start_day & baselineDataOnly.DayOfCondition <= end_day, :);
+        
+        if isempty(weekly_data)
+            fprintf('Skipping Week %d: No data available.\n', i_week);
+            continue;
+        end
+        
+        fprintf('\n--- Generating Weekly Figure 3D for Week %d (Days %d-%d) ---\n', i_week, start_day, end_day);
+        try
+            if ~exist('violinplot.m','file'),error('ViolinPlotNotFound:Fig3D_Weekly','violinplot.m not found.');end
+            hFig3D_weekly = figure('Name', sprintf('Fig 3D Weekly W%d (%s)', i_week, current_metric_suffix), 'Visible', 'off', 'Color', 'w');
+            ax3D_w = axes('Parent', hFig3D_weekly); hold(ax3D_w, 'on');
+            
+            time_windows = {[0 23], [0 11], [3 9], [12 23], [15 21], [10 14], [22 2]};
+            window_labels = {'Full Day', 'Bright (0-11)', 'Mid-Bright (3-9)', 'Dark (12-23)', 'Mid-Dark (15-21)', 'Bright-Dark (10-14)', 'Dark-Bright (22-2)'};
+            
+            animal_window_means_list_w = [];
+            weekAnimals = unique(weekly_data.Animal);
+            for i_an = 1:length(weekAnimals)
+                T_animal_w = weekly_data(weekly_data.Animal == weekAnimals(i_an), :);
+                if isempty(T_animal_w), continue; end
+                for i_win = 1:length(time_windows)
+                    window = time_windows{i_win};
+                    if window(1) <= window(2), idx_time = T_animal_w.(ztHourVar) >= window(1) & T_animal_w.(ztHourVar) <= window(2);
+                    else, idx_time = T_animal_w.(ztHourVar) >= window(1) | T_animal_w.(ztHourVar) <= window(2); end
+                    mean_act_this_win = mean(T_animal_w.(current_metric_var)(idx_time), 'omitnan');
+                    animal_window_means_list_w = [animal_window_means_list_w; {weekAnimals(i_an), window_labels{i_win}, T_animal_w.Sex(1), mean_act_this_win}];
+                end
+            end
+            if isempty(animal_window_means_list_w), close(hFig3D_weekly); continue; end
+            plotTable_3D_w = cell2table(animal_window_means_list_w, 'VariableNames', {'Animal', 'Window', 'Sex', 'MeanActivity'});
+            plotTable_3D_w.Window = categorical(plotTable_3D_w.Window, window_labels);
+            violinplot(plotTable_3D_w.MeanActivity, plotTable_3D_w.Window, 'Parent', ax3D_w, 'GroupOrder', window_labels, 'ShowData', false, 'ViolinColor', grayColor);
+            jitterAmount = 0.15;
+            for i_win = 1:length(window_labels)
+                window_data = plotTable_3D_w(plotTable_3D_w.Window == window_labels{i_win}, :);
+                x_scatter = i_win + (rand(height(window_data), 1) - 0.5) * jitterAmount;
+                male_idx = window_data.Sex == 'Male';
+                scatter(ax3D_w, x_scatter(male_idx), window_data.MeanActivity(male_idx), 40, maleColor, 'filled', 'MarkerFaceAlpha', 0.9);
+                scatter(ax3D_w, x_scatter(~male_idx), window_data.MeanActivity(~male_idx), 40, femaleColor, 'filled', 'MarkerFaceAlpha', 0.9);
+            end
+            
+            num_tests_weekly = 2;
+            corrected_alpha_weekly = 0.05 / num_tests_weekly;
+            fprintf('Applying Bonferroni correction for %d tests. New alpha = %.4f\n', num_tests_weekly, corrected_alpha_weekly);
+            fprintf('--- STATS: Figure 3D WEEK %d for %s ---\n', i_week, current_metric_suffix);
+            y_max_w = max(plotTable_3D_w.MeanActivity, [], 'omitnan'); if isempty(y_max_w) || isnan(y_max_w), y_max_w=1; end
+            current_ylim_w = ylim(ax3D_w);
+            y_range_w = diff(current_ylim_w); if y_range_w==0 || isnan(y_range_w), y_range_w=y_max_w; end
+            
+            bright_data_w = plotTable_3D_w(plotTable_3D_w.Window == 'Bright (0-11)', :);
+            dark_data_w = plotTable_3D_w(plotTable_3D_w.Window == 'Dark (12-23)', :);
+            stats_table_w1 = outerjoin(bright_data_w(:,{'Animal', 'MeanActivity'}), dark_data_w(:,{'Animal', 'MeanActivity'}), 'Keys','Animal', 'MergeKeys', true);
+            stats_table_w1.Properties.VariableNames(2:3) = {'Bright', 'Dark'};
+            [~, p_bvd_w] = ttest(stats_table_w1.Bright, stats_table_w1.Dark);
+            fprintf('Paired T-Test (Bright vs Dark): p = %.4f\n', p_bvd_w);
+            y_pos1_w = current_ylim_w(2) + 0.05 * y_range_w;
+            plot_sig_bar(ax3D_w, [2, 4], p_bvd_w, y_pos1_w, corrected_alpha_weekly);
+            
+            midbright_data_w = plotTable_3D_w(plotTable_3D_w.Window == 'Mid-Bright (3-9)', :);
+            middark_data_w = plotTable_3D_w(plotTable_3D_w.Window == 'Mid-Dark (15-21)', :);
+            stats_table_w2 = outerjoin(midbright_data_w(:,{'Animal', 'MeanActivity'}), middark_data_w(:,{'Animal', 'MeanActivity'}), 'Keys','Animal', 'MergeKeys', true);
+            stats_table_w2.Properties.VariableNames(2:3) = {'MidBright', 'MidDark'};
+            [~, p_mbvmd_w] = ttest(stats_table_w2.MidBright, stats_table_w2.MidDark);
+            fprintf('Paired T-Test (Mid-Bright vs Mid-Dark): p = %.4f\n', p_mbvmd_w);
+            y_pos2_w = y_pos1_w + 0.15 * y_range_w;
+            plot_sig_bar(ax3D_w, [3, 5], p_mbvmd_w, y_pos2_w, corrected_alpha_weekly);
+            
+            ylim(ax3D_w, [current_ylim_w(1), y_pos2_w + 0.1*y_range_w]);
+            
+            xticklabels(ax3D_w, window_labels); xtickangle(ax3D_w, 45);
+            ylabel(ax3D_w,['Mean ',current_metric_ylabel]);
+            title(ax3D_w,sprintf('Baseline Diurnality (300Lux) - Week %d (Days %d-%d)\n%s',i_week, start_day, end_day, strrep(current_metric_suffix,'_',' ')));
+            if strcmp(current_metric_var, normalizedActivityVar), line(ax3D_w, xlim(ax3D_w), [0 0], 'Color', 'k', 'LineStyle', ':'); end
+            set(ax3D_w, 'Position', [0.13 0.2 0.775 0.7]);
+            drawnow;
+            fig_filename = fullfile(savePath_Fig3, sprintf('Figure3D_WeeklyBaseline_W%d_CorrectedStats_%s.png', i_week, current_metric_suffix));
+            exportgraphics(hFig3D_weekly, fig_filename); disp(['Saved: ', fig_filename]); close(hFig3D_weekly);
+        catch ME_3D_weekly, warning('ErrGen:Fig3D_Weekly','Error Fig 3D Weekly (W%d, %s): %s', i_week, current_metric_suffix, ME_3D_weekly.message); end
+    end
+end
+%% --- 4. GENERATE FIGURE 4 COMPONENTS ---
+disp('=====================================================');
+disp('--- Starting Generation of Figure 4 Components ---');
+disp('=====================================================');
+for met_idx = 1:length(activity_metrics_to_plot)
+    current_metric_var = activity_metrics_to_plot{met_idx};
+    current_metric_suffix = metric_suffixes{met_idx};
+    current_metric_ylabel = metric_ylabels{met_idx};
+    fprintf('\n--- Generating Figure 4 components for metric: %s ---\n', current_metric_var);
+    
+    %% FIG 4A: 48h Diurnality Line Plots by Condition
+    disp('--- Starting Figure 4A: 48h Profiles ---');
+    try
+        % --- MODIFICATION START: Replaced subplot with tiledlayout ---
+        lightingConditions_Fig4A = {'300Lux', '1000Lux', 'FullDark', '300LuxEnd'};
+        hFig4A_Subplots = figure('Name', sprintf('Fig 4A: 48h Profiles by Condition (%s)', current_metric_suffix), 'Visible', 'off', 'Color', 'w', 'Units', 'inches', 'Position', [1 1 7 9]);
+        
+        % Create a tiled layout
+        t = tiledlayout(4, 1, 'TileSpacing', 'compact', 'Padding', 'compact');
+        
+        global_min_y = Inf; global_max_y = -Inf;
+        all_profiles_4A = cell(length(lightingConditions_Fig4A), 1);
+        for i_cond = 1:length(lightingConditions_Fig4A)
+            data_this_cond = dataTable(ismember(dataTable.Animal, fourCondAnimals) & dataTable.Condition == lightingConditions_Fig4A{i_cond}, :);
+            if isempty(data_this_cond), continue; end
+            hourly_mean = groupsummary(data_this_cond, ztHourVar, 'mean', current_metric_var);
+            mean_profile_24h = NaN(hoursPerDay, 1);
+            [lia, locb] = ismember((0:23)', hourly_mean.(ztHourVar));
+            mean_profile_24h(lia) = hourly_mean.(['mean_', current_metric_var])(locb(lia));
+            all_profiles_4A{i_cond} = mean_profile_24h;
+            global_min_y = min(global_min_y, min(mean_profile_24h,[],'omitnan'));
+            global_max_y = max(global_max_y, max(mean_profile_24h,[],'omitnan'));
+        end
+        
+        for i_cond_4A = 1:length(lightingConditions_Fig4A)
+            % Use nexttile to create the next axes
+            ax4A = nexttile; 
+            hold(ax4A, 'on');
+            mean_profile_48h = [all_profiles_4A{i_cond_4A}; all_profiles_4A{i_cond_4A}];
+            plot(ax4A, (0:47)', mean_profile_48h, 'k-', 'LineWidth', 1.5);
+            
+            % Set a globally consistent Y-limit
+            if isfinite(global_min_y) && isfinite(global_max_y)
+                ylim(ax4A, [global_min_y - 0.1*abs(global_min_y), global_max_y + 0.1*abs(global_max_y)]);
+            end
+            
+            current_ylim = ylim(ax4A);
+            patch(ax4A, [ztLightsOffStart, ztLightsOffEnd+1, ztLightsOffEnd+1, ztLightsOffStart], [current_ylim(1) current_ylim(1) current_ylim(2) current_ylim(2)], [0.9 0.9 0.9], 'FaceAlpha', 0.3, 'EdgeColor', 'none');
+            patch(ax4A, [ztLightsOffStart+24, ztLightsOffEnd+1+24, ztLightsOffEnd+1+24, ztLightsOffStart+24], [current_ylim(1) current_ylim(1) current_ylim(2) current_ylim(2)], [0.9 0.9 0.9], 'FaceAlpha', 0.3, 'EdgeColor', 'none');
+            title(ax4A, lightingConditions_Fig4A{i_cond_4A});
+            xticks(ax4A, 0:6:47); xlim(ax4A, [-0.5 47.5]); grid(ax4A, 'on');
+        end
+        
+        % Add shared labels and a main title using the tiled layout handle
+        xlabel(t, 'ZT Hour (Double Plotted)');
+        ylabel(t, current_metric_ylabel);
+        title(t, sprintf('48h Activity Profiles by Condition (%s)', current_metric_suffix));
+        % --- MODIFICATION END ---
+        
+        fig_filename = fullfile(savePath_Fig4, sprintf('Figure4A_SubplotProfiles_SameY_%s.png', current_metric_suffix));
+        exportgraphics(hFig4A_Subplots, fig_filename); disp(['Saved: ', fig_filename]); close(hFig4A_Subplots);
+    catch ME_4A, warning('ErrGen:Fig4A','Error Fig 4A (%s): %s', current_metric_suffix, ME_4A.message); end
+    
+    %% FIG 4B: Overlay Activity Profiles with Difference Line (WITH STATS)
+    disp('--- Starting Figure 4B: Overlay Profiles ---');
+    fprintf('\n--- STATS: Figure 4B (300Lux vs 1000Lux Hourly) for %s ---\n', current_metric_var);
+    try
+        hFig4B_OverlayDiff = figure('Name', sprintf('Fig 4B: Overlay Profiles & Difference (%s)', current_metric_suffix), 'Visible', 'off', 'Color', 'w');
+        ax4B = axes('Parent', hFig4B_OverlayDiff); hold(ax4B, 'on');
+        conditions_Fig4B = {'300Lux', '1000Lux', 'FullDark'};
+        lineColors = {[0 0.4470 0.7410], [0.8500 0.3250 0.0980], [0.4660 0.6740 0.1880]};
+        mean_profiles = table();
+        for i_cond = 1:length(conditions_Fig4B)
+            animals_for_cond = allAnimals; if strcmp(conditions_Fig4B{i_cond},'FullDark'), animals_for_cond=fourCondAnimals; end
+            data_this_cond = dataTable(ismember(dataTable.Animal, animals_for_cond) & dataTable.Condition == conditions_Fig4B{i_cond}, :);
+            hourly_stats = groupsummary(data_this_cond, ztHourVar, {'mean','std','nnz'}, current_metric_var);
+            mean_prof = NaN(hoursPerDay,1); sem_prof = NaN(hoursPerDay,1);
+            [lia,locb] = ismember((0:23)', hourly_stats.(ztHourVar));
+            mean_prof(lia) = hourly_stats.(['mean_',current_metric_var])(locb(lia));
+            sem_val = hourly_stats.(['std_',current_metric_var])(locb(lia)) ./ sqrt(hourly_stats.(['nnz_',current_metric_var])(locb(lia)));
+            sem_val(hourly_stats.(['nnz_',current_metric_var])(locb(lia)) <=1) = NaN; sem_prof(lia) = sem_val;
+            mean_profiles.(conditions_Fig4B{i_cond}) = mean_prof;
+            plot(ax4B, (0:23)', mean_prof, 'Color', lineColors{i_cond}, 'LineWidth', 2, 'DisplayName', conditions_Fig4B{i_cond});
+            fill(ax4B, [(0:23)'; flipud((0:23)')], [mean_prof-sem_prof; flipud(mean_prof+sem_prof)], lineColors{i_cond}, 'FaceAlpha', 0.15, 'EdgeColor', 'none', 'HandleVisibility', 'off');
+        end
+        diff_profile = mean_profiles.('1000Lux') - mean_profiles.('300Lux');
+        plot(ax4B, (0:23)', diff_profile, 'k:', 'LineWidth', 1.5, 'DisplayName', '1000L-300L Diff');
+        current_ylim = ylim(ax4B);
+        patch(ax4B,[ztLightsOffStart,ztLightsOffEnd+1,ztLightsOffEnd+1,ztLightsOffStart], [current_ylim(1) current_ylim(1) current_ylim(2) current_ylim(2)], [0.9 0.9 0.9],'FaceAlpha',0.2,'EdgeColor','none', 'HandleVisibility', 'off');
+        p_values = ones(24, 1);
+        for zt = 0:23
+            d300 = dataTable(dataTable.Condition=='300Lux' & dataTable.ZT_Time==zt, :).(current_metric_var);
+            d1000 = dataTable(dataTable.Condition=='1000Lux' & dataTable.ZT_Time==zt, :).(current_metric_var);
+            if ~isempty(d300) && ~isempty(d1000), [~, p] = ttest2(d300, d1000); p_values(zt+1) = p; end
+        end
+        significant_hours = find((p_values * 24) < 0.05);
+        fprintf('Significant differences (p < 0.05, Bonferroni) at ZT: %s\n', num2str(significant_hours' - 1));
+        title(ax4B, sprintf('Fig 4B: Activity Profiles & Difference (%s)', current_metric_suffix));
+        xlabel(ax4B, 'ZT Hour'); ylabel(ax4B, current_metric_ylabel);
+        xticks(ax4B, 0:6:23); xlim(ax4B, [-0.5 23.5]); grid(ax4B, 'on'); legend(ax4B, 'Location', 'northeast');
+        set(ax4B, 'Position', [0.13 0.11 0.775 0.815]); % Add margins for whitespace
+        fig_filename = fullfile(savePath_Fig4, sprintf('Figure4B_OverlayAndDiff_%s.png', current_metric_suffix));
+        exportgraphics(hFig4B_OverlayDiff, fig_filename); disp(['Saved: ', fig_filename]); close(hFig4B_OverlayDiff);
+    catch ME_4B, warning('ErrGen:Fig4B','Error Fig 4B (%s): %s', current_metric_suffix, ME_4B.message); end
+    
+    %% FIG 4C: Quantification of Diurnality (Violins)
+    disp('--- Starting Figure 4C: Diurnality Violins ---');
+    try
+        if ~exist('violinplot.m','file'),error('ViolinPlotNotFound:Fig4C','violinplot.m not found.');end
+        hFig4C_violins = figure('Name', sprintf('Fig 4C: Diurnality Violins by Cond (%s)', current_metric_suffix), 'Visible', 'off', 'Color', 'w');
+        ax4C = axes('Parent', hFig4C_violins); hold(ax4C, 'on');
+        conditions_Fig4C = {'300Lux', '1000Lux', 'FullDark', '300LuxEnd'};
+        plotData = []; groupData = []; groupOrder = {};
+        for i_cond = 1:length(conditions_Fig4C)
+            for lp = ["On", "Off"]
+                groupName = [conditions_Fig4C{i_cond}, '-', char(lp)];
+                animals_for_cond = allAnimals; if ismember(conditions_Fig4C{i_cond},["FullDark","300LuxEnd"]), animals_for_cond=fourCondAnimals; end
+                data_segment = dataTable(ismember(dataTable.Animal, animals_for_cond) & dataTable.Condition == conditions_Fig4C{i_cond} & dataTable.LightPeriod == lp, :);
+                if isempty(data_segment), continue; end
+                animal_means = groupsummary(data_segment, animalVar, 'mean', current_metric_var);
+                plotData = [plotData; animal_means.(['mean_',current_metric_var])];
+                groupData = [groupData; repmat(categorical({groupName}), height(animal_means),1)];
+                groupOrder{end+1} = groupName;
+            end
+        end
+        violinplot(plotData, groupData, 'Parent', ax4C, 'GroupOrder', groupOrder, 'ViolinColor', grayColor, 'ShowData', false);
+        jitterAmount = 0.15;
+        for i_group = 1:length(groupOrder)
+            group_label = groupOrder{i_group};
+            parts = split(group_label, '-'); cond_str = string(parts{1}); lp_str = string(parts{2});
+            animals_for_cond = allAnimals; if ismember(cond_str, ["FullDark","300LuxEnd"]), animals_for_cond=fourCondAnimals; end
+            group_data = dataTable(ismember(dataTable.Animal, animals_for_cond) & dataTable.Condition == cond_str & dataTable.LightPeriod == lp_str, :);
+            animal_means_this_group = groupsummary(group_data, {'Animal', 'Sex'}, 'mean', current_metric_var);
+            if ~isempty(animal_means_this_group)
+                x_scatter = i_group + (rand(height(animal_means_this_group), 1) - 0.5) * jitterAmount;
+                male_idx = animal_means_this_group.Sex == 'Male';
+                scatter(ax4C, x_scatter(male_idx), animal_means_this_group.(['mean_',current_metric_var])(male_idx), 40, maleColor, 'filled', 'MarkerFaceAlpha', 0.8, 'HandleVisibility', 'off');
+                scatter(ax4C, x_scatter(~male_idx), animal_means_this_group.(['mean_',current_metric_var])(~male_idx), 40, femaleColor, 'filled', 'MarkerFaceAlpha', 0.8, 'HandleVisibility', 'off');
+            end
+        end
+
+        % --- START: NEW STATS BLOCK FOR FIG 4C ---
+disp('--- STATS: Figure 4C (Paired & Ratio Analysis) ---');
+
+% Create a wide-format table for paired statistics
+all_animal_means_4C = table();
+groupOrder_4C = {'300Lux-On', '300Lux-Off', '1000Lux-On', '1000Lux-Off', 'FullDark-On', 'FullDark-Off', '300LuxEnd-On', '300LuxEnd-Off'};
+
+for i_grp = 1:length(groupOrder_4C)
+    groupName = groupOrder_4C{i_grp};
+    parts = split(groupName, '-');
+    cond_str = string(parts{1});
+    lp_str = string(parts{2});
+    
+    % Use the correct animal list for each condition
+    animals_for_cond = allAnimals;
+    if ismember(cond_str, ["FullDark", "300LuxEnd"]), animals_for_cond = fourCondAnimals; end
+    
+    data_segment = dataTable(ismember(dataTable.Animal, animals_for_cond) & dataTable.Condition == cond_str & dataTable.LightPeriod == lp_str, :);
+    if isempty(data_segment), continue; end
+    
+    animal_means = groupsummary(data_segment, animalVar, 'mean', current_metric_var);
+    animal_means.Properties.VariableNames{animalVar} = 'Animal';
+    animal_means.Properties.VariableNames{end} = groupName;
+    
+    if isempty(all_animal_means_4C)
+        all_animal_means_4C = animal_means(:, {'Animal', groupName});
+    else
+        all_animal_means_4C = outerjoin(all_animal_means_4C, animal_means(:, {'Animal', groupName}), 'Keys', 'Animal', 'MergeKeys', true);
+    end
+end
+
+        % 1. t-test comparison for FullDark 'On' vs 'Off'
+        if all(ismember({'FullDark-On', 'FullDark-Off'}, all_animal_means_4C.Properties.VariableNames))
+            [~, p_dark] = ttest(all_animal_means_4C.('FullDark-On'), all_animal_means_4C.('FullDark-Off'));
+            fprintf('Paired T-Test (FullDark On vs. Off): p = %.4f\n', p_dark);
+        else
+            disp('Could not perform FullDark On vs Off test; data missing.');
+        end
+        
+        % 2. t-test comparison for 1000Lux On vs Off
+        if all(ismember({'1000Lux-On', '1000Lux-Off'}, all_animal_means_4C.Properties.VariableNames))
+            [~, p_1000] = ttest(all_animal_means_4C.('1000Lux-On'), all_animal_means_4C.('1000Lux-Off'));
+            fprintf('Paired T-Test (1000Lux On vs. Off): p = %.4f\n', p_1000);
+        else
+            disp('Could not perform 1000Lux On vs Off test; data missing.');
+        end
+        
+        
+        % 3. Calculate and compare activity ratios (On:Off)
+        fprintf('\n--- Activity Ratios (On / Off) ---\n');
+        
+        % Calculate mean for each group across animals
+        mean_300_on = mean(all_animal_means_4C.('300Lux-On'), 'omitnan');
+        mean_300_off = mean(all_animal_means_4C.('300Lux-Off'), 'omitnan');
+        ratio_300 = mean_300_on / mean_300_off;
+        fprintf('300Lux Ratio (On:Off): %.2f\n', ratio_300);
+        
+        mean_1000_on = mean(all_animal_means_4C.('1000Lux-On'), 'omitnan');
+        mean_1000_off = mean(all_animal_means_4C.('1000Lux-Off'), 'omitnan');
+        ratio_1000 = mean_1000_on / mean_1000_off;
+        fprintf('1000Lux Ratio (On:Off): %.2f\n', ratio_1000);
+        
+        mean_dark_on = mean(all_animal_means_4C.('FullDark-On'), 'omitnan');
+        mean_dark_off = mean(all_animal_means_4C.('FullDark-Off'), 'omitnan');
+        ratio_dark = mean_dark_on / mean_dark_off;
+        fprintf('FullDark Ratio (On:Off): %.2f\n', ratio_dark);
+
+        mean_dark_off = mean(all_animal_means_4C.('FullDark-Off'), 'omitnan');
+        ratio_dark = mean_dark_on / mean_dark_off;
+        fprintf('FullDark Ratio (On:Off): %.2f\n', ratio_dark);
+        
+        % --- START: ADDITION FOR 300LUXEND ---
+        if all(ismember({'300LuxEnd-On', '300LuxEnd-Off'}, all_animal_means_4C.Properties.VariableNames))
+            mean_300LuxEnd_on = mean(all_animal_means_4C.('300LuxEnd-On'), 'omitnan');
+            mean_300LuxEnd_off = mean(all_animal_means_4C.('300LuxEnd-Off'), 'omitnan');
+            ratio_300LuxEnd = mean_300LuxEnd_on / mean_300LuxEnd_off;
+            fprintf('300LuxEnd Ratio (On:Off): %.2f\n', ratio_300LuxEnd);
+        else
+            disp('Could not calculate 300LuxEnd ratio; data missing.');
+            mean_300LuxEnd_on = NaN; % Define as NaN to avoid errors in Fig 4E
+            mean_300LuxEnd_off = NaN;
+        end
+        
+        disp('--- Plotting Significance Bars for Fig 4C ---');
+        hold(ax4C, 'on');
+        
+        % Find x-positions from the violin plot's groupOrder
+        % Note: This relies on 'groupOrder' from the violin plot section above
+        try
+            x_1000_on = find(strcmp(groupOrder, '1000Lux-On'));
+            x_1000_off = find(strcmp(groupOrder, '1000Lux-Off'));
+            x_dark_on = find(strcmp(groupOrder, 'FullDark-On'));
+            x_dark_off = find(strcmp(groupOrder, 'FullDark-Off'));
+            
+            % Get current Y-axis limits and calculate spacing
+            y_lims = get(ax4C, 'YLim');
+            y_range = diff(y_lims);
+            
+            % Define Y-levels for bars (stacking them)
+            y_bar_1000 = y_lims(2) + y_range * 0.05;
+            y_text_1000 = y_bar_1000 + y_range * 0.01; % Text position just above the bar
+            
+            % Place the next bar above the first one
+            y_bar_dark = y_text_1000 + y_range * 0.05; 
+            y_text_dark = y_bar_dark + y_range * 0.01; % Text position just above the second bar
+            
+            % Set new Y-limit to make space for all annotations
+            % This is the key step to prevent overlap with the graph border
+            new_y_max = y_text_dark + y_range * 0.06; % Add 6% buffer above last text
+            set(ax4C, 'YLim', [y_lims(1), new_y_max]);
+            
+            % 1. Plot 1000Lux comparison
+            if ~isempty(x_1000_on) && ~isempty(x_1000_off) && exist('p_1000', 'var') && ~isnan(p_1000)
+                line_x = [x_1000_on, x_1000_off]; % Just the start and end points
+                line_y = [y_bar_1000, y_bar_1000]; % A single horizontal line
+                plot(ax4C, line_x, line_y, 'k-', 'LineWidth', 1.2);
+                
+                % Convert p-value to asterisk string
+                if p_1000 < 0.001, str_1000 = '***'; elseif p_1000 < 0.01, str_1000 = '**'; elseif p_1000 < 0.05, str_1000 = '*'; else, str_1000 = 'n.s.'; end
+                text(ax4C, mean(line_x), y_text_1000, str_1000, 'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom', 'FontSize', 10);
+            end
+            
+            % 2. Plot FullDark comparison
+            if ~isempty(x_dark_on) && ~isempty(x_dark_off) && exist('p_dark', 'var') && ~isnan(p_dark)
+                line_x = [x_dark_on, x_dark_off]; % Just the start and end points
+                line_y = [y_bar_dark, y_bar_dark]; % A single horizontal line
+                plot(ax4C, line_x, line_y, 'k-', 'LineWidth', 1.2);
+                
+                % Convert p-value to asterisk string
+                if p_dark < 0.001, str_dark = '***'; elseif p_dark < 0.01, str_dark = '**'; elseif p_dark < 0.05, str_dark = '*'; else, str_dark = 'n.s.'; end
+                text(ax4C, mean(line_x), y_text_dark, str_dark, 'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom', 'FontSize', 10);
+            end
+        catch ME_SigBars
+            warning('ErrGen:Fig4CSigBars', 'Could not plot significance bars for Fig 4C: %s', ME_SigBars.message);
+        end
+
+        xtickangle(ax4C, 45);
+        ylabel(ax4C, ['Mean ', current_metric_ylabel]);
+        title(ax4C, sprintf('Fig 4C: Diurnality (On/Off) by Condition (%s)', current_metric_suffix));
+        set(ax4C, 'Position', [0.13 0.2 0.775 0.7]); % Add margins for whitespace
+        fig_filename = fullfile(savePath_Fig4, sprintf('Figure4C_Violins_GrayPooled_%s.png', current_metric_suffix));
+        exportgraphics(hFig4C_violins, fig_filename); disp(['Saved: ', fig_filename]); close(hFig4C_violins);
+    catch ME_4C, warning('ErrGen:Fig4C','Error Fig 4C (%s): %s', current_metric_suffix, ME_4C.message); end
+    
+    %% FIG 4D: Shift in Activity Peaks During FullDark
+    disp('--- Starting Figure 4D: Peak Shift ---');
+    try
+        hFig4D_peak = figure('Name', sprintf('Fig 4D: Peak Shift in FullDark (%s)', current_metric_suffix), 'Visible', 'off', 'Color', 'w');
+        ax4D = axes('Parent', hFig4D_peak);
+        data_FD = dataTable(ismember(dataTable.Animal, fourCondAnimals) & dataTable.Condition == 'FullDark', :);
+        unique_days_FD = unique(data_FD.DayOfCondition);
+        daily_peak_ZT = NaN(length(unique_days_FD),1);
+        for i_day = 1:length(unique_days_FD)
+            day_val = unique_days_FD(i_day);
+            data_this_day = data_FD(data_FD.DayOfCondition == day_val, :);
+            if isempty(data_this_day), continue; end
+            hourly_mean = groupsummary(data_this_day, ztHourVar, 'mean', current_metric_var);
+            if ~isempty(hourly_mean), [~,maxIdx] = max(hourly_mean.(['mean_', current_metric_var])); if ~isempty(maxIdx), daily_peak_ZT(i_day) = hourly_mean.(ztHourVar)(maxIdx(1)); end; end
+        end
+
+        disp('--- STATS: Figure 4D (First Week vs. Last Week Peak ZT) ---');
+        
+        % Find the range of days in FullDark
+        min_day_FD = min(unique_days_FD);
+        max_day_FD = max(unique_days_FD);
+        
+        % Define first and last weeks (ensure at least 7 days exist for a week)
+        if length(unique_days_FD) >= 7
+            first_week_days = unique_days_FD(unique_days_FD <= min_day_FD + 6);
+            last_week_days = unique_days_FD(unique_days_FD >= max_day_FD - 6);
+        
+            % Get the corresponding peak ZT values for those days
+            first_week_peaks = daily_peak_ZT(ismember(unique_days_FD, first_week_days));
+            last_week_peaks = daily_peak_ZT(ismember(unique_days_FD, last_week_days));
+            
+            % Remove any potential NaNs from calculation
+            first_week_peaks(isnan(first_week_peaks)) = [];
+            last_week_peaks(isnan(last_week_peaks)) = [];
+        
+            % Perform an independent (unpaired) t-test
+            [h, p_peak, ci, stats_peak] = ttest2(first_week_peaks, last_week_peaks);
+            
+            fprintf('Comparing Peak ZT in FullDark:\n');
+            fprintf('  - First Week Mean Peak ZT: %.2f (n=%d days)\n', mean(first_week_peaks), numel(first_week_peaks));
+            fprintf('  - Last Week Mean Peak ZT:  %.2f (n=%d days)\n', mean(last_week_peaks), numel(last_week_peaks));
+            fprintf('Independent T-Test Result:\n');
+            fprintf('  - T-statistic: %.3f\n', stats_peak.tstat);
+            fprintf('  - P-value: %.4f\n', p_peak);
+            if h
+                disp('  - The difference between the first and last week is statistically significant (p < 0.05).');
+            else
+                disp('  - The difference between the first and last week is NOT statistically significant (p >= 0.05).');
+            end
+        else
+            disp('  - Not enough data (< 7 days) in FullDark to perform weekly comparison.');
+        end
+        
+        plot(ax4D, unique_days_FD(~isnan(daily_peak_ZT)), daily_peak_ZT(~isnan(daily_peak_ZT)), 'o-k', 'LineWidth', 1.5);
+        title(ax4D, sprintf('Fig 4D: Peak Activity ZT in FullDark (%s)', current_metric_suffix));
+        xlabel(ax4D, 'Day in FullDark'); ylabel(ax4D, 'ZT of Peak Activity');
+        yticks(ax4D, 0:6:23); ylim(ax4D, [-1 24]); grid(ax4D, 'on');
+        set(ax4D, 'Position', [0.13 0.11 0.775 0.815]); % Add margins for whitespace
+        fig_filename = fullfile(savePath_Fig4, sprintf('Figure4D_PeakShift_%s.png', current_metric_suffix));
+        exportgraphics(hFig4D_peak, fig_filename); disp(['Saved: ', fig_filename]); close(hFig4D_peak);
+    catch ME_4D, warning('ErrGen:Fig4D','Error Fig 4D (%s): %s', current_metric_suffix, ME_4D.message); end
+
+%% FIG 4E: Percentage Change (ON vs OFF) Violin Plot
+    disp('--- Starting Figure 4E: ON/OFF Pct Change Violins ---');
+    try
+        % 1. Setup Figure
+        if ~exist('violinplot.m','file'),error('ViolinPlotNotFound:Fig4E','violinplot.m not found.');end
+        hFig4E_violins = figure('Name', sprintf('Fig 4E: ON/OFF Pct Change Violins (%s)', current_metric_suffix), 'Visible', 'off', 'Color', 'w');
+        ax4E = axes('Parent', hFig4E_violins); hold(ax4E, 'on');
+        
+        % 2. Define Conditions and Data Containers
+        conditions_Fig4E = {'300Lux', '1000Lux', 'FullDark', '300LuxEnd'};
+        plotData_4E = []; groupData_4E = []; groupOrder_4E = {};
+        
+        % Temporary storage to avoid re-calculating for the scatter loop
+        grouped_pct_data = containers.Map; 
+        
+        % 3. Main Data Processing Loop
+        for i_cond = 1:length(conditions_Fig4E)
+            cond_name = conditions_Fig4E{i_cond};
+            
+            % Apply specific animal selection logic
+            animals_for_cond = allAnimals; 
+            if ismember(cond_name, ["FullDark","300LuxEnd"]), animals_for_cond=fourCondAnimals; end
+            
+            % Get raw data for this condition
+            data_segment = dataTable(ismember(dataTable.Animal, animals_for_cond) & dataTable.Condition == cond_name, :);
+            if isempty(data_segment), continue; end
+            
+            % Aggregate mean by Animal, Sex, and LightPeriod
+            animal_means = groupsummary(data_segment, {'Animal', 'Sex', 'LightPeriod'}, 'mean', current_metric_var);
+            
+            % Pivot data so 'On' and 'Off' are columns for each animal
+            try
+                pivoted_data = unstack(animal_means, ['mean_' current_metric_var], 'LightPeriod', 'GroupingVariables', {'Animal', 'Sex'});
+                
+                % Check if both On and Off exist after unstacking
+                if all(ismember({'On', 'Off'}, pivoted_data.Properties.VariableNames))
+                    % Calculate INDIVIDUAL Percentage Change: ((ON - OFF) / OFF) * 100
+                    pivoted_data.PctChange = ((pivoted_data.On - pivoted_data.Off) ./ pivoted_data.Off) * 100;
+                    
+                    % Remove NaNs or Infs if OFF was 0
+                    valid_rows = isfinite(pivoted_data.PctChange);
+                    pivoted_data = pivoted_data(valid_rows, :);
+    
+                    % Append to main plotting data
+                    plotData_4E = [plotData_4E; pivoted_data.PctChange];
+                    groupData_4E = [groupData_4E; repmat(categorical({cond_name}), height(pivoted_data), 1)];
+                    groupOrder_4E{end+1} = cond_name;
+                    
+                    % Store for the scatter overlay loop
+                    grouped_pct_data(cond_name) = pivoted_data;
+                else
+                    warning('Fig4E:IncompleteData', 'Missing ON or OFF data for condition: %s', cond_name);
+                end
+            catch ME_Pivot
+                 warning('Fig4E:PivotError', 'Could not pivot data for %s: %s', cond_name, ME_Pivot.message);
+            end
+        end
+        
+        % 4. Create Base Gray Violin Plot
+        violinplot(plotData_4E, groupData_4E, 'Parent', ax4E, 'GroupOrder', groupOrder_4E, 'ViolinColor', grayColor, 'ShowData', false);
+        
+        % 5. Reference line at 0% (crucial for this plot type)
+        yline(ax4E, 0, 'k--', 'LineWidth', 1.2, 'HandleVisibility', 'off');
+        
+        % 6. Overlay Individual Data Points (Males vs Females)
+        jitterAmount = 0.15;
+        for i_group = 1:length(groupOrder_4E)
+            group_label = groupOrder_4E{i_group};
+            
+            if isKey(grouped_pct_data, group_label)
+                group_data = grouped_pct_data(group_label);
+                
+                % Jitter x-positions
+                x_scatter = i_group + (rand(height(group_data), 1) - 0.5) * jitterAmount;
+                
+                % Split by Sex and Plot
+                male_idx = group_data.Sex == 'Male';
+                scatter(ax4E, x_scatter(male_idx), group_data.PctChange(male_idx), 40, maleColor, 'filled', 'MarkerFaceAlpha', 0.8, 'HandleVisibility', 'off');
+                scatter(ax4E, x_scatter(~male_idx), group_data.PctChange(~male_idx), 40, femaleColor, 'filled', 'MarkerFaceAlpha', 0.8, 'HandleVisibility', 'off');
+            end
+        end
+    
+        try
+            disp('--- STATS: Figure 4E (Comparisons to 300Lux control) ---');
+            hold(ax4E, 'on');
+            
+            % Ensure the control group '300Lux' data exists
+            if ~isKey(grouped_pct_data, '300Lux')
+                error('StatsErr:Fig4E', 'Control data (300Lux) not found for stats.');
+            end
+            data_control = grouped_pct_data('300Lux').PctChange;
+            
+            p_values = containers.Map('KeyType', 'char', 'ValueType', 'double'); % To store p-values
+            
+            % 1. Compare 1000Lux vs 300Lux
+            if isKey(grouped_pct_data, '1000Lux')
+                data_1000 = grouped_pct_data('1000Lux').PctChange;
+                if ~isempty(data_control) && ~isempty(data_1000)
+                    [~, p] = ttest2(data_control, data_1000); 
+                    p_values('1000Lux') = p; 
+                    fprintf('Independent T-Test (300Lux vs 1000Lux): p = %.4f\n', p);
+                end
+            end
+            
+            % 2. Compare FullDark vs 300Lux
+            if isKey(grouped_pct_data, 'FullDark')
+                data_dark = grouped_pct_data('FullDark').PctChange;
+                if ~isempty(data_control) && ~isempty(data_dark)
+                    [~, p] = ttest2(data_control, data_dark); 
+                    p_values('FullDark') = p; 
+                    fprintf('Independent T-Test (300Lux vs FullDark): p = %.4f\n', p);
+                end
+            end
+            
+            % 3. Compare 300LuxEnd vs 300Lux
+            if isKey(grouped_pct_data, '300LuxEnd')
+                data_end = grouped_pct_data('300LuxEnd').PctChange;
+                if ~isempty(data_control) && ~isempty(data_end)
+                    [~, p] = ttest2(data_control, data_end); 
+                    p_values('300LuxEnd') = p; 
+                    fprintf('Independent T-Test (300Lux vs 300LuxEnd): p = %.4f\n', p);
+                end
+            end
+        
+            % --- Plot Significance Bars (4C Style) ---
+            x_control = find(strcmp(groupOrder_4E, '300Lux'));
+            x_1000 = find(strcmp(groupOrder_4E, '1000Lux'));
+            x_dark = find(strcmp(groupOrder_4E, 'FullDark'));
+            x_end = find(strcmp(groupOrder_4E, '300LuxEnd'));
+            
+            if isempty(x_control), error('StatsErr:Fig4E', 'Could not find x-position for 300Lux'); end
+        
+            y_lims_4E = get(ax4E, 'YLim');
+            y_range_4E = diff(y_lims_4E);
+            
+            y_level_1 = y_lims_4E(2) + y_range_4E * 0.05; 
+            y_text_1 = y_level_1 + y_range_4E * 0.01;
+            
+            y_level_2 = y_text_1 + y_range_4E * 0.05; 
+            y_text_2 = y_level_2 + y_range_4E * 0.01;
+            
+            y_level_3 = y_text_2 + y_range_4E * 0.05; 
+            y_text_3 = y_level_3 + y_range_4E * 0.01;
+            
+            new_y_max_4E = y_text_3 + y_range_4E * 0.03; 
+            set(ax4E, 'YLim', [y_lims_4E(1), new_y_max_4E]);
+            
+            % 1. Plot 1000Lux vs 300Lux comparison
+            if ~isempty(x_1000) && isKey(p_values, '1000Lux')
+                p = p_values('1000Lux');
+                if p < 0.001, str_sig = '***'; elseif p < 0.01, str_sig = '**'; elseif p < 0.05, str_sig = '*'; else, str_sig = 'n.s.'; end
+                
+                % Only plot if significant 
+                if ~strcmp(str_sig, 'n.s.') 
+                    line_x = [x_control, x_1000];
+                    line_y = [y_level_1, y_level_1];
+                    plot(ax4E, line_x, line_y, 'k-', 'LineWidth', 1.2);
+                    text(ax4E, mean(line_x), y_text_1, str_sig, 'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom', 'FontSize', 10, 'FontWeight', 'bold');
+                end
+            end
+            
+            % 2. Plot FullDark vs 300Lux comparison
+            if ~isempty(x_dark) && isKey(p_values, 'FullDark')
+                p = p_values('FullDark');
+                if p < 0.001, str_sig = '***'; elseif p < 0.01, str_sig = '**'; elseif p < 0.05, str_sig = '*'; else, str_sig = 'n.s.'; end
+                
+                % Only plot if significant 
+                if ~strcmp(str_sig, 'n.s.') 
+                    line_x = [x_control, x_dark];
+                    line_y = [y_level_2, y_level_2]; % Use the second y-level
+                    plot(ax4E, line_x, line_y, 'k-', 'LineWidth', 1.2);
+                    text(ax4E, mean(line_x), y_text_2, str_sig, 'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom', 'FontSize', 10, 'FontWeight', 'bold');
+                end
+            end
+            
+            % 3. Plot 300LuxEnd vs 300Lux comparison
+            if ~isempty(x_end) && isKey(p_values, '300LuxEnd')
+                p = p_values('300LuxEnd');
+                if p < 0.001, str_sig = '***'; elseif p < 0.01, str_sig = '**'; elseif p < 0.05, str_sig = '*'; else, str_sig = 'n.s.'; end
+                
+                % Only plot if significant 
+                if ~strcmp(str_sig, 'n.s.') 
+                    line_x = [x_control, x_end];
+                    line_y = [y_level_3, y_level_3]; % Use the third y-level
+                    plot(ax4E, line_x, line_y, 'k-', 'LineWidth', 1.2);
+                    text(ax4E, mean(line_x), y_text_3, str_sig, 'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom', 'FontSize', 10, 'FontWeight', 'bold');
+                end
+            end
+
+        catch ME_Stats_4E
+            warning('ErrGen:Fig4EStats', 'Could not plot significance for Fig 4E: %s', ME_Stats_4E.message);
+        end
+
+        % 7. Formatting and Saving
+        ylabel(ax4E, {'% Change (ON vs OFF)', '((ON-OFF)/OFF \times 100)'});
+        title(ax4E, sprintf('Fig 4E: %% Activity Change (ON vs OFF) (%s)', current_metric_suffix));
+        set(ax4E, 'Position', [0.13 0.11 0.775 0.815]); 
+    
+        fig_filename = fullfile(savePath_Fig4, sprintf('Figure4E_PctChange_Violins_%s.png', current_metric_suffix));
+        exportgraphics(hFig4E_violins, fig_filename); 
+        disp(['Saved: ', fig_filename]); 
+        close(hFig4E_violins);
+        
+    catch ME_4E
+        warning('ErrGen:Fig4E','Error Fig 4E (%s): %s', current_metric_suffix, ME_4E.message);
+    end
+end
+
+%% --- 5. GENERATE FIGURE 5 COMPONENTS ---
+% Final Order: 5A-Profiles, 5B-Violins, 5C-Difference Bars, 5D-Peak Shift, 5E-Ratios
+disp('=====================================================');
+disp('--- Starting Generation of Figure 5 Components ---');
+disp('=====================================================');
+for met_idx = 1:length(activity_metrics_to_plot)
+    current_metric_var = activity_metrics_to_plot{met_idx};
+    current_metric_suffix = metric_suffixes{met_idx};
+    current_metric_ylabel = metric_ylabels{met_idx};
+    fprintf('\n--- Generating Figure 5 components for metric: %s ---\n', current_metric_var);
+    sex_groups = {maleAnimals, femaleAnimals};
+    sex_labels = {'Male', 'Female'};
+    
+    %% FIG 5A: Sex differences in 24h profiles by Condition (WITH STATS)
+    disp('--- Starting Figure 5A: Sex Difference Profiles ---');
+    fprintf('\n--- STATS: Figure 5A (300Lux vs 1000Lux Hourly) for %s ---\n', current_metric_var);
+    conditionsFor5A = {'300Lux', '1000Lux', 'FullDark'};
+    condColors_5A = {[0 0.4470 0.7410], [0.8500 0.3250 0.0980], [0.4660 0.6740 0.1880]};
+    for sex_idx = 1:length(sex_groups)
+        hFig5A_current = figure('Name', sprintf('Figure 5A: %s Profiles (%s)', sex_labels{sex_idx}, current_metric_suffix), 'Visible', 'off', 'Color', 'w');
+        ax5A = axes('Parent', hFig5A_current); hold(ax5A, 'on');
+        for i_cond = 1:length(conditionsFor5A)
+            animals_for_cond = sex_groups{sex_idx};
+            if strcmp(conditionsFor5A{i_cond}, 'FullDark'), animals_for_cond = intersect(animals_for_cond, fourCondAnimals); end
+            sexCondData = dataTable(ismember(dataTable.Animal, animals_for_cond) & dataTable.Condition == conditionsFor5A{i_cond}, :);
+            hourlyStats = groupsummary(sexCondData, ztHourVar, {'mean','std','nnz'}, current_metric_var);
+            meanProfile = NaN(hoursPerDay,1); semProfile = NaN(hoursPerDay,1);
+            [lia,locb] = ismember((0:23)',hourlyStats.(ztHourVar));
+            meanProfile(lia) = hourlyStats.(['mean_',current_metric_var])(locb(lia));
+            sem_val = hourlyStats.(['std_',current_metric_var])(locb(lia)) ./ sqrt(hourlyStats.(['nnz_',current_metric_var])(locb(lia)));
+            sem_val(hourlyStats.(['nnz_',current_metric_var])(locb(lia)) <=1) = NaN; semProfile(lia) = sem_val;
+            plot(ax5A, (0:23)', meanProfile, 'LineWidth', 1.5, 'DisplayName', conditionsFor5A{i_cond}, 'Color', condColors_5A{i_cond});
+            fill(ax5A, [(0:23)'; flipud((0:23)')], [meanProfile-semProfile; flipud(meanProfile+semProfile)], condColors_5A{i_cond}, 'FaceAlpha', 0.1, 'EdgeColor', 'none', 'HandleVisibility', 'off');
+        end
+        
+        % Conditionally set Y-limits for 'NormalizedActivity'
+        % This ensures the 'pixelDiff' plot still scales automatically.
+        if strcmp(current_metric_var, 'NormalizedActivity')
+            ylim(ax5A, [-0.4, 1.2]);
+        end
+
+        if strcmp(current_metric_var, 'SelectedPixelDifference')
+            ylim(ax5A, [0, 8E5]);
+        end
+        
+        current_ylim = ylim(ax5A);
+        patch(ax5A,[ztLightsOffStart,ztLightsOffEnd+1,ztLightsOffEnd+1,ztLightsOffStart], [current_ylim(1) current_ylim(1) current_ylim(2) current_ylim(2)], [0.9 0.9 0.9],'FaceAlpha',0.2,'EdgeColor','none', 'HandleVisibility', 'off');
+        fprintf('-- Sex: %s --\n', sex_labels{sex_idx});
+        p_values = ones(24, 1);
+        for zt = 0:23
+            d300 = dataTable(ismember(dataTable.Animal, sex_groups{sex_idx}) & dataTable.Condition=='300Lux' & dataTable.ZT_Time==zt, :).(current_metric_var);
+            d1000 = dataTable(ismember(dataTable.Animal, sex_groups{sex_idx}) & dataTable.Condition=='1000Lux' & dataTable.ZT_Time==zt, :).(current_metric_var);
+            if ~isempty(d300) && ~isempty(d1000), [~, p] = ttest2(d300, d1000); p_values(zt+1) = p; end
+        end
+        fprintf('Significant differences (p < 0.05, Bonferroni) at ZT: %s\n', num2str(find((p_values*24)<0.05)' - 1));
+        title(ax5A,sprintf('Fig 5A: %s Profiles (%s)', sex_labels{sex_idx}, current_metric_suffix));
+        xlabel(ax5A,'ZT Hour'); ylabel(ax5A,['Mean ', current_metric_ylabel]);
+        xticks(ax5A,0:6:23);xlim(ax5A,[-0.5,23.5]);grid(ax5A,'on'); legend(ax5A, 'Location','northwest');
+        set(ax5A, 'Position', [0.13 0.11 0.775 0.815]);
+        fig_filename = fullfile(savePath_Fig5, sprintf('Figure5A_Profile_%s_%s.png', sex_labels{sex_idx}, current_metric_suffix));
+        exportgraphics(hFig5A_current, fig_filename); disp(['Saved: ', fig_filename]); close(hFig5A_current);
+    end
+
+    %% FIG 5B: Diurnality Violins by Sex and Condition (12-Violin Plot)
+    disp('--- Starting Figure 5B: 12-Violin Plot ---');
+    try
+        if ~exist('violinplot.m','file'),error('ViolinPlotNotFound:Fig5B','violinplot.m not found.');end
+        hFig5B_current = figure('Name', sprintf('Fig 5B: Diurnality by Sex and Cond (%s)', current_metric_suffix), 'Visible', 'off', 'Color', 'w', 'Units', 'inches', 'Position', [1 1 12 7]);
+        ax5B = axes('Parent', hFig5B_current); hold(ax5B, 'on');
+        plotTable_5B = table();
+        conditions_5B = {'300Lux', '1000Lux', 'FullDark'};
+        lightPeriods_5B = {'On', 'Off'};
+        all_animal_means_5B = table(unique(dataTable.Animal), 'VariableNames', {'Animal'});
+        for i_cond = 1:length(conditions_5B)
+            for i_lp = 1:length(lightPeriods_5B)
+                cond_str = conditions_5B{i_cond}; lp_str = lightPeriods_5B{i_lp};
+                animals_for_cond = allAnimals;
+                if strcmp(cond_str, 'FullDark'), animals_for_cond = fourCondAnimals; end
+                data_segment = dataTable(ismember(dataTable.Animal, animals_for_cond) & dataTable.Condition == cond_str & dataTable.LightPeriod == lp_str, :);
+                if isempty(data_segment), continue; end
+                animal_means = groupsummary(data_segment, {animalVar, 'Sex'}, 'mean', current_metric_var);
+                animal_means.Group = repmat(categorical({sprintf('%s-%s', cond_str, lp_str)}), height(animal_means), 1);
+                plotTable_5B = [plotTable_5B; animal_means];
+                stat_col_name = sprintf('%s_%s', cond_str, lp_str);
+                temp_stat_table = animal_means(:, {'Animal', ['mean_', current_metric_var]});
+                temp_stat_table.Properties.VariableNames{2} = stat_col_name;
+                all_animal_means_5B = outerjoin(all_animal_means_5B, temp_stat_table, 'Keys', 'Animal', 'MergeKeys', true);
+            end
+        end
+        groupOrder_5B = {'300Lux-On', '1000Lux-On', 'FullDark-On', '300Lux-Off', '1000Lux-Off', 'FullDark-Off'};
+        finalGroupOrder = {};
+        for i_grp = 1:length(groupOrder_5B)
+            for i_sex = 1:length(sex_labels), finalGroupOrder{end+1} = sprintf('%s-%s', groupOrder_5B{i_grp}, sex_labels{i_sex}); end
+        end
+        plotTable_5B.PlotGroup = categorical(strcat(cellstr(plotTable_5B.Group), '-', cellstr(plotTable_5B.Sex)));
+        violinplot(plotTable_5B.(['mean_', current_metric_var]), plotTable_5B.PlotGroup, 'GroupOrder', finalGroupOrder, 'ViolinColor', grayColor, 'ShowData', false, 'Parent', ax5B);
+        jitterAmount = 0.15;
+        for i_plot_grp = 1:length(finalGroupOrder)
+            group_label = finalGroupOrder{i_plot_grp};
+            group_data = plotTable_5B(plotTable_5B.PlotGroup == group_label, :);
+            if ~isempty(group_data)
+                x_scatter = i_plot_grp + (rand(height(group_data), 1) - 0.5) * jitterAmount;
+                if contains(group_label, 'Male')
+                    scatter_color = maleColor;
+                else
+                    scatter_color = femaleColor;
+                end
+                scatter(ax5B, x_scatter, group_data.(['mean_', current_metric_var]), 40, scatter_color, 'filled', 'MarkerFaceAlpha', 0.9);
+            end
+        end
+        ylabel(ax5B, ['Mean ' current_metric_ylabel]);
+        title(ax5B, sprintf('Fig 5B: Diurnality by Condition and Sex (%s)', current_metric_suffix));
+        xtickangle(ax5B, 45);
+        set(ax5B, 'Position', [0.1 0.25 0.88 0.65]);
+        
+        % --- Statistics for 5B ---
+        fprintf('\n--- STATS: Figure 5B (Paired On vs. Off by Sex/Condition) for %s ---\n', current_metric_suffix);
+        tests_5B = { ...
+            {'300Lux_On', '300Lux_Off', maleAnimals, 'Male 300Lux (On vs Off)'}, ...
+            {'300Lux_On', '300Lux_Off', femaleAnimals, 'Female 300Lux (On vs Off)'}, ...
+            {'1000Lux_On', '1000Lux_Off', maleAnimals, 'Male 1000Lux (On vs Off)'}, ...
+            {'1000Lux_On', '1000Lux_Off', femaleAnimals, 'Female 1000Lux (On vs Off)'}, ...
+            {'FullDark_On', 'FullDark_Off', intersect(maleAnimals, fourCondAnimals), 'Male FullDark (On vs Off)'}, ...
+            {'FullDark_On', 'FullDark_Off', intersect(femaleAnimals, fourCondAnimals), 'Female FullDark (On vs Off)'} ...
+        };
+        for i_test = 1:length(tests_5B)
+            idx = ismember(all_animal_means_5B.Animal, tests_5B{i_test}{3});
+            [~, p] = ttest(all_animal_means_5B.(tests_5B{i_test}{1})(idx), all_animal_means_5B.(tests_5B{i_test}{2})(idx));
+            fprintf('Paired T-Test | %s: p = %.4f (N=%.0f)\n', tests_5B{i_test}{4}, p, sum(idx));
+        end
+        fprintf('\n--- STATS: Figure 5B (2-Way Repeated Measures ANOVA) for %s ---\n', current_metric_suffix);
+        stat_table_clean = all_animal_means_5B;
+        stat_table_clean.Properties.VariableNames = matlab.lang.makeValidName(stat_table_clean.Properties.VariableNames);
+        for i_sex = 1:length(sex_labels)
+            sex_str = sex_labels{i_sex};
+            sex_animals = sex_groups{i_sex};
+            t_wide_1 = stat_table_clean(ismember(string(stat_table_clean.Animal), string(sex_animals)), :);
+            
+            % --- DEBUG: Check N-count for this ANOVA ---
+            fprintf('  [DEBUG] N-count for %s (300v1000Lux): %d\n', sex_str, height(t_wide_1));
+            
+            withinDesign_1 = table({'x300Lux';'x300Lux';'x1000Lux';'x1000Lux'}, {'On';'Off';'On';'Off'}, 'VariableNames', {'Condition', 'LightPeriod'});
+            rm_formula_1 = 'x300Lux_On-x1000Lux_Off ~ 1';
+            withinDesign_1 = table({'x300Lux';'x300Lux';'x1000Lux';'x1000Lux'}, {'On';'Off';'On';'Off'}, 'VariableNames', {'Condition', 'LightPeriod'});
+            rm_formula_1 = 'x300Lux_On-x1000Lux_Off ~ 1'; 
+            rm_1 = fitrm(t_wide_1, rm_formula_1, 'WithinDesign', withinDesign_1);
+            ranova_tbl_1 = ranova(rm_1, 'WithinModel', 'Condition*LightPeriod');
+
+            % Search for the exact interaction term
+            p_idx_1 = strcmp(ranova_tbl_1.Properties.RowNames, 'Condition:LightPeriod');
+            if ~any(p_idx_1) % Fallback if exact name fails (e.g., 'Condition:LightPeriod:Time')
+                 p_idx_1 = contains(ranova_tbl_1.Properties.RowNames, 'Condition:LightPeriod');
+            end
+            
+            p_interaction_1_all = ranova_tbl_1.pValue(p_idx_1);
+            p_interaction_1 = p_interaction_1_all(1); % Force to be scalar (take first match)
+            
+            fprintf('ANOVA (%s, 300 vs 1000Lux): Condition x LightPeriod interaction p = %.4f (N=%.0f)\n', sex_str, p_interaction_1, height(t_wide_1));
+            four_cond_sex_animals = intersect(sex_animals, fourCondAnimals);
+            
+            t_wide_2 = stat_table_clean(ismember(string(stat_table_clean.Animal), string(four_cond_sex_animals)), :);
+            
+            % --- DEBUG: Check N-count for this ANOVA ---
+            fprintf('  [DEBUG] N-count for %s (All 3 Cond): %d\n', sex_str, height(t_wide_2));
+
+            withinDesign_2 = table({'x300Lux';'x300Lux';'x1000Lux';'x1000Lux';'FullDark';'FullDark'}, {'On';'Off';'On';'Off';'On';'Off'}, 'VariableNames', {'Condition', 'LightPeriod'});
+            withinDesign_2 = table({'x300Lux';'x300Lux';'x1000Lux';'x1000Lux';'FullDark';'FullDark'}, {'On';'Off';'On';'Off';'On';'Off'}, 'VariableNames', {'Condition', 'LightPeriod'});
+            rm_formula_2 = 'x300Lux_On-FullDark_Off ~ 1';
+            rm_2 = fitrm(t_wide_2, rm_formula_2, 'WithinDesign', withinDesign_2);
+            ranova_tbl_2 = ranova(rm_2, 'WithinModel', 'Condition*LightPeriod');
+            
+            % Search for the exact interaction term
+            p_idx_2 = strcmp(ranova_tbl_2.Properties.RowNames, 'Condition:LightPeriod');
+             if ~any(p_idx_2) % Fallback if exact name fails
+                 p_idx_2 = contains(ranova_tbl_2.Properties.RowNames, 'Condition:LightPeriod');
+            end
+
+            p_interaction_2_all = ranova_tbl_2.pValue(p_idx_2);
+            p_interaction_2 = p_interaction_2_all(1); % Force to be scalar (take first match)
+
+            fprintf('ANOVA (%s, All 3 Conditions): Condition x LightPeriod interaction p = %.4f (N=%.0f)\n', sex_str, p_interaction_2, height(t_wide_2));
+        end
+
+        fig_filename = fullfile(savePath_Fig5, sprintf('Figure5B_Violins_12group_%s.png', current_metric_suffix));
+        exportgraphics(hFig5B_current, fig_filename); disp(['Saved: ', fig_filename]); close(hFig5B_current);
+    catch ME_5B, warning('ErrGen:Fig5B','Error Fig 5B (%s): %s', current_metric_suffix, ME_5B.message); end
+
+    %% FIG 5C: Difference Bar Plot (Rebuilt)
+    disp('--- Starting Figure 5C: Difference Plot ---');
+    fprintf('\n--- STATS: Figure 5C (Male Change vs Female Change Hourly) for %s ---\n', current_metric_var);
+    try
+        hFig5C_current = figure('Name', sprintf('Figure 5C: 1000L-300L Diff by Sex (%s)', current_metric_suffix), 'Visible', 'off', 'Color', 'w');
+        ax5C = axes('Parent', hFig5C_current);
+        male_diffs = get_last_2_weeks_profile(dataTable, maleAnimals, '1000Lux', ztHourVar, current_metric_var) - get_last_2_weeks_profile(dataTable, maleAnimals, '300Lux', ztHourVar, current_metric_var);
+        female_diffs = get_last_2_weeks_profile(dataTable, femaleAnimals, '1000Lux', ztHourVar, current_metric_var) - get_last_2_weeks_profile(dataTable, femaleAnimals, '300Lux', ztHourVar, current_metric_var);
+        bar(ax5C, 0:23, [mean(male_diffs,1,'omitnan'); mean(female_diffs,1,'omitnan')]', 0.9);
+        hold(ax5C,'on'); plot(xlim, [0 0], 'k--'); hold(ax5C,'off');
+        p_values = ones(24, 1);
+        for zt = 1:24, [~, p] = ttest2(male_diffs(:, zt), female_diffs(:, zt)); p_values(zt) = p; end
+        fprintf('Significant interaction (p < 0.05, Bonferroni) at ZT: %s\n', num2str(find((p_values*24)<0.05)' - 1));
+        title(sprintf('Fig 5C: Change in Activity (Last 2wks 1000L - 300L) (%s)', current_metric_suffix));
+        ylabel('Change in Activity'); xlabel('ZT Hour');
+        legend('Male','Female'); grid on; xlim([-0.75, 23.75]);
+        set(ax5C, 'Position', [0.13 0.11 0.775 0.815]);
+        fig_filename_5C = fullfile(savePath_Fig5, sprintf('Figure5C_DifferenceBars_Last2wks_%s.png', current_metric_suffix));
+        exportgraphics(hFig5C_current, fig_filename_5C); close(hFig5C_current);
+    catch ME_5C, warning('ErrGen:Fig5C','Error Fig 5C (%s): %s', current_metric_suffix, ME_5C.message); end
+
+    %% FIG 5D: Daily Movement Across Conditions
+    disp('No longer displaying this one (5D)');
+
+    %% FIG 5E: ON:OFF Activity Percent Change Plot (8-Violin Sex Comparison)
+    disp('--- Starting Figure 5E: ON-OFF Pct Change by Sex ---');
+    try
+        % 1. Setup Figure
+        if ~exist('violinplot.m','file'),error('ViolinPlotNotFound:Fig5E','violinplot.m not found.');end
+        hFig5E_current = figure('Name', sprintf('Figure 5E: ON-OFF Pct Change by Sex (%s)', current_metric_suffix), 'Visible', 'off', 'Color', 'w');
+        ax5E = axes('Parent', hFig5E_current); hold(ax5E, 'on');
+        
+        % 2. Data Preparation 
+        pct_change_table = all_animal_means_5B; 
+        pct_change_table.Sex = categorical(ismember(pct_change_table.Animal, maleAnimals), [0, 1], {'Female', 'Male'});
+        
+        % Calculate Percent Change for all 4 conditions
+        pct_change_table.PctChg_300Lux = (pct_change_table.('300Lux_On') - pct_change_table.('300Lux_Off')) ./ pct_change_table.('300Lux_Off') * 100;
+        pct_change_table.PctChg_1000Lux = (pct_change_table.('1000Lux_On') - pct_change_table.('1000Lux_Off')) ./ pct_change_table.('1000Lux_Off') * 100;
+        pct_change_table.PctChg_FullDark = (pct_change_table.('FullDark_On') - pct_change_table.('FullDark_Off')) ./ pct_change_table.('FullDark_Off') * 100;
+        
+        % (Assumes '300LuxEnd_On'/'300LuxEnd_Off' are in all_animal_means_5B)
+        if all(ismember({'300LuxEnd_On', '300LuxEnd_Off'}, pct_change_table.Properties.VariableNames))
+            pct_change_table.PctChg_300LuxEnd = (pct_change_table.('300LuxEnd_On') - pct_change_table.('300LuxEnd_Off')) ./ pct_change_table.('300LuxEnd_Off') * 100;
+            conditions_5E = {'300Lux', '1000Lux', 'FullDark', '300LuxEnd'};
+        else
+            warning('Fig5E:MissingData', '300LuxEnd data not found in table. Plotting 3 conditions only.');
+            conditions_5E = {'300Lux', '1000Lux', 'FullDark'};
+        end
+
+        plotData_5E = [];
+        groupData_5E = [];
+        groupOrder_5E = {};
+        
+        for i_cond = 1:length(conditions_5E)
+            cond_name = conditions_5E{i_cond};
+            cond_col_name = ['PctChg_', cond_name]; % e.g., 'PctChg_300Lux'
+            
+            % Handle animal subsetting for FullDark/300LuxEnd
+            animal_idx = true(height(pct_change_table), 1);
+            if ismember(cond_name, ["FullDark", "300LuxEnd"])
+                animal_idx = ismember(pct_change_table.Animal, fourCondAnimals);
+            end
+            
+            for sex = ["Female", "Male"]
+                group_name = [cond_name, '-', char(sex)];
+                sex_idx = (pct_change_table.Sex == sex);
+                
+                % Combine all filters
+                final_idx = animal_idx & sex_idx & isfinite(pct_change_table.(cond_col_name));
+                data_segment = pct_change_table(final_idx, :);
+                
+                if ~isempty(data_segment)
+                    plotData_5E = [plotData_5E; data_segment.(cond_col_name)];
+                    groupData_5E = [groupData_5E; repmat(categorical({group_name}), height(data_segment), 1)];
+                    groupOrder_5E{end+1} = group_name;
+                end
+            end
+        end
+
+        % 3. Create Base Gray Violin Plot
+        violinplot(plotData_5E, groupData_5E, 'Parent', ax5E, 'GroupOrder', groupOrder_5E, 'ViolinColor', grayColor, 'ShowData', false);
+        
+        % 4. Overlay Individual Data Points (Males vs Females)
+        jitterAmount = 0.15;
+        for i_group = 1:length(groupOrder_5E)
+            group_label = groupOrder_5E{i_group};
+            
+            % Parse the group label
+            parts = split(group_label, '-');
+            cond_str = string(parts{1});
+            sex_str = string(parts{2});
+            
+            cond_col_name = ['PctChg_', char(cond_str)];
+            
+            % Determine animal list
+            animals_for_cond = allAnimals;
+            if ismember(cond_str, ["FullDark", "300LuxEnd"]), animals_for_cond = fourCondAnimals; end
+            
+            % Get the correct data
+            data_idx = pct_change_table.Sex == sex_str & ...
+                         ismember(pct_change_table.Animal, animals_for_cond) & ...
+                         isfinite(pct_change_table.(cond_col_name));
+            data_points = pct_change_table.(cond_col_name)(data_idx);
+
+            if ~isempty(data_points)
+                % Jitter x-positions
+                x_scatter = i_group + (rand(length(data_points), 1) - 0.5) * jitterAmount;
+                
+                % Determine scatter color based on sex
+                scatterColor = (sex_str == "Male") * maleColor + (sex_str == "Female") * femaleColor;
+                
+                scatter(ax5E, x_scatter, data_points, 40, scatterColor, 'filled', 'MarkerFaceAlpha', 0.8, 'HandleVisibility', 'off');
+            end
+        end
+
+        % 5. Reference line at 0%
+        yline(ax5E, 0, 'k--');
+        
+        % 6. Statistics (M vs F for each condition)
+        fprintf('\n--- STATS: Figure 5E (Male vs Female Pct Change) for %s ---\n', current_metric_suffix);
+        p_values_5E = containers.Map;
+        
+        for cond_name_str = conditions_5E
+            cond_name = char(cond_name_str);
+            cond_col_name = ['PctChg_', cond_name];
+            
+            animals_for_cond = allAnimals;
+            if ismember(cond_name, ["FullDark", "300LuxEnd"]), animals_for_cond = fourCondAnimals; end
+            
+            male_data = pct_change_table.(cond_col_name)(pct_change_table.Sex=='Male' & ismember(pct_change_table.Animal, animals_for_cond) & isfinite(pct_change_table.(cond_col_name)));
+            female_data = pct_change_table.(cond_col_name)(pct_change_table.Sex=='Female' & ismember(pct_change_table.Animal, animals_for_cond) & isfinite(pct_change_table.(cond_col_name)));
+            
+            if ~isempty(male_data) && ~isempty(female_data)
+                [~,p] = ttest2(male_data, female_data);
+                p_values_5E(cond_name) = p;
+                fprintf('Independent T-Test | %s PctChange (M vs F): p = %.4f\n', cond_name, p);
+            else
+                fprintf('Skipping T-Test for %s: insufficient M or F data.\n', cond_name);
+            end
+        end
+
+        try
+            disp('--- Plotting Significance Bars for Fig 5E ---');
+            hold(ax5E, 'on');
+            
+            y_lims_5E = get(ax5E, 'YLim');
+            y_range_5E = diff(y_lims_5E);
+            
+            y_bar_level = y_lims_5E(2) + y_range_5E * 0.05; 
+            y_text_level = y_bar_level + y_range_5E * 0.01; 
+            
+            new_y_max_5E = y_text_level + y_range_5E * 0.03;
+            set(ax5E, 'YLim', [y_lims_5E(1), new_y_max_5E]);
+            
+            % Loop through the conditions and plot bars between pairs
+            for i_cond = 1:length(conditions_5E)
+                cond_name = conditions_5E{i_cond};
+                
+                if isKey(p_values_5E, cond_name)
+                    p = p_values_5E(cond_name);
+                    
+                    % Find x-positions for this pair
+                    x_female = find(strcmp(groupOrder_5E, [cond_name, '-Female']));
+                    x_male = find(strcmp(groupOrder_5E, [cond_name, '-Male']));
+                    
+                    if ~isempty(x_female) && ~isempty(x_male)
+                        if p < 0.001, str_sig = '***'; elseif p < 0.01, str_sig = '**'; elseif p < 0.05, str_sig = '*'; else, str_sig = 'n.s.'; end
+                        
+                        if ~strcmp(str_sig, 'n.s.')
+                            line_x = [x_female, x_male];
+                            line_y = [y_bar_level, y_bar_level];
+                            plot(ax5E, line_x, line_y, 'k-', 'LineWidth', 1.2);
+                            text(ax5E, mean(line_x), y_text_level, str_sig, 'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom', 'FontSize', 10, 'FontWeight', 'bold');
+                        end
+                    end
+                end
+            end
+            
+        catch ME_Stats_5E
+            warning('ErrGen:Fig5EStats', 'Could not plot significance for Fig 5E: %s', ME_Stats_5E.message);
+        end
+
+        % 8. Formatting and Saving
+        title(ax5E, sprintf('Fig 5E: ON:OFF %% Change by Sex and Condition (%s)', current_metric_suffix));
+        ylabel(ax5E, '% Change (ON vs OFF)');
+        
+        % Set Ticks AND Labels
+        set(ax5E, 'XTick', 1:length(groupOrder_5E)); 
+        set(ax5E, 'XTickLabel', groupOrder_5E);
+        xtickangle(ax5E, 45); % Rotate labels to prevent overlap
+        
+        grid(ax5E, 'on');
+        
+        fig_filename = fullfile(savePath_Fig5, sprintf('Figure5E_PctChangeViolins_BySex_%s.png', current_metric_suffix));
+        exportgraphics(hFig5E_current, fig_filename); 
+        disp(['Saved: ', fig_filename]); 
+        close(hFig5E_current);
+        
+    catch ME_5E
+        warning('ErrGen:Fig5E','Error Fig 5E (%s): %s', current_metric_suffix, ME_5E.message); 
+    end
+end
+disp('=====================================================');
+disp('--- All Figure Generation Complete ---');
+disp('=====================================================');
+
+%% --- 6. HELPER FUNCTIONS ---
+function profile_data = get_last_2_weeks_profile(dataTable, animals, cond, ztHourVar, current_metric_var)
+    all_animal_profiles = NaN(length(animals), 24);
+    for an_idx = 1:length(animals)
+        animal_data = dataTable(dataTable.Animal == animals(an_idx) & dataTable.Condition == cond, :);
+        if isempty(animal_data), continue; end
+        unique_days = unique(animal_data.DayOfCondition);
+        if isempty(unique_days), continue; end
+        last_14_days = unique_days(max(1, end-13):end);
+        final_data = animal_data(ismember(animal_data.DayOfCondition, last_14_days), :);
+        if isempty(final_data), continue; end
+        hourly_means = groupsummary(final_data, ztHourVar, 'mean', current_metric_var);
+        [lia, locb] = ismember(0:23, hourly_means.(ztHourVar));
+        all_animal_profiles(an_idx, lia) = hourly_means.(['mean_', current_metric_var])(locb(lia));
+    end
+    profile_data = all_animal_profiles;
+end
+function plot_sig_bar(ax, x_coords, p_uncorrected, y_pos, corrected_alpha)
+    % Assign default alpha if not provided by the call
+    if nargin < 5
+        corrected_alpha = 0.05;
+    end
+    
+    % Only proceed to plot the bar if the result is significant after correction
+    if p_uncorrected < corrected_alpha
+        % Determine the number of asterisks based on the CONVENTIONAL (uncorrected) p-value
+        if p_uncorrected < 0.001
+            ast_str = '***';
+        elseif p_uncorrected < 0.01
+            ast_str = '**';
+        else
+            ast_str = '*';
+        end
+        
+        hold(ax, 'on');
+        plot(ax, x_coords, [y_pos, y_pos], '-k', 'LineWidth', 1.2);
+        text(ax, mean(x_coords), y_pos, ast_str, ...
+            'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom', 'FontSize', 16);
+        hold(ax, 'off');
+    end
+    % If p_uncorrected >= corrected_alpha, the function does nothing, and no bar is plotted.
+end
