@@ -669,48 +669,75 @@ end
         exportgraphics(hFig4C_violins, fig_filename); disp(['Saved: ', fig_filename]); close(hFig4C_violins);
     catch ME_4C, warning('ErrGen:Fig4C','Error Fig 4C (%s): %s', current_metric_suffix, ME_4C.message); end
     
-    %% FIG 4D: Shift in Activity Peaks During FullDark
+%% FIG 4D: Shift in Activity Peaks During FullDark
     disp('--- Starting Figure 4D: Peak Shift ---');
     try
         hFig4D_peak = figure('Name', sprintf('Fig 4D: Peak Shift in FullDark (%s)', current_metric_suffix), 'Visible', 'off', 'Color', 'w');
         ax4D = axes('Parent', hFig4D_peak);
+        
+        % Get data for the N=8 animals in FullDark
         data_FD = dataTable(ismember(dataTable.Animal, fourCondAnimals) & dataTable.Condition == 'FullDark', :);
+        animals_to_test = fourCondAnimals;
         unique_days_FD = unique(data_FD.DayOfCondition);
-        daily_peak_ZT = NaN(length(unique_days_FD),1);
-        for i_day = 1:length(unique_days_FD)
-            day_val = unique_days_FD(i_day);
-            data_this_day = data_FD(data_FD.DayOfCondition == day_val, :);
-            if isempty(data_this_day), continue; end
-            hourly_mean = groupsummary(data_this_day, ztHourVar, 'mean', current_metric_var);
-            if ~isempty(hourly_mean), [~,maxIdx] = max(hourly_mean.(['mean_', current_metric_var])); if ~isempty(maxIdx), daily_peak_ZT(i_day) = hourly_mean.(ztHourVar)(maxIdx(1)); end; end
-        end
+        
+        % --- START: Corrected Peak Calculation (Per Animal, Per Day) ---
+        % This correctly avoids pseudoreplication.
+        % We create a matrix to store daily peaks: Rows=Days, Cols=Animals
+        animal_daily_peaks = NaN(length(unique_days_FD), length(animals_to_test));
 
-        disp('--- STATS: Figure 4D (First Week vs. Last Week Peak ZT) ---');
-        
-        % Find the range of days in FullDark
-        min_day_FD = min(unique_days_FD);
-        max_day_FD = max(unique_days_FD);
-        
-        % Define first and last weeks (ensure at least 7 days exist for a week)
-        if length(unique_days_FD) >= 7
-            first_week_days = unique_days_FD(unique_days_FD <= min_day_FD + 6);
-            last_week_days = unique_days_FD(unique_days_FD >= max_day_FD - 6);
-        
-            % Get the corresponding peak ZT values for those days
-            first_week_peaks = daily_peak_ZT(ismember(unique_days_FD, first_week_days));
-            last_week_peaks = daily_peak_ZT(ismember(unique_days_FD, last_week_days));
+        for i_animal = 1:length(animals_to_test)
+            animal_id = animals_to_test(i_animal);
+            data_this_animal = data_FD(data_FD.Animal == animal_id, :);
             
-            % Remove any potential NaNs from calculation
-            first_week_peaks(isnan(first_week_peaks)) = [];
-            last_week_peaks(isnan(last_week_peaks)) = [];
+            for i_day = 1:length(unique_days_FD)
+                day_val = unique_days_FD(i_day);
+                data_this_day_animal = data_this_animal(data_this_animal.DayOfCondition == day_val, :);
+                
+                if isempty(data_this_day_animal), continue; end
+                
+                % Get hourly mean for *this animal* on *this day*
+                hourly_mean = groupsummary(data_this_day_animal, ztHourVar, 'mean', current_metric_var);
+                
+                if ~isempty(hourly_mean)
+                    [~, maxIdx] = max(hourly_mean.(['mean_', current_metric_var]));
+                    if ~isempty(maxIdx)
+                        animal_daily_peaks(i_day, i_animal) = hourly_mean.(ztHourVar)(maxIdx(1));
+                    end
+                end
+            end
+        end
+        % --- END: Corrected Peak Calculation ---
+
+        disp('--- STATS: Figure 4D (Corrected: Paired T-Test, First vs. Last Week) ---');
         
-            % Perform an independent (unpaired) t-test
-            [h, p_peak, ci, stats_peak] = ttest2(first_week_peaks, last_week_peaks);
+        % Define day indices for first and last week
+        min_day_idx = 1;
+        max_day_idx = length(unique_days_FD);
+        
+        % Ensure at least 7 days exist for a week
+        if max_day_idx >= 7
+            % Use indices from the animal_daily_peaks matrix
+            first_week_day_indices = min_day_idx : min(min_day_idx + 6, max_day_idx);
+            last_week_day_indices = max(max_day_idx - 6, min_day_idx) : max_day_idx;
+
+            % Get the daily peaks for all animals in these weeks (Rows=Days, Cols=Animals)
+            first_week_all_peaks = animal_daily_peaks(first_week_day_indices, :);
+            last_week_all_peaks = animal_daily_peaks(last_week_day_indices, :);
+
+            % Calculate the SINGLE mean peak ZT per animal for each period
+            % This gives a 1x8 vector for each
+            first_week_animal_means = mean(first_week_all_peaks, 1, 'omitnan');
+            last_week_animal_means = mean(last_week_all_peaks, 1, 'omitnan');
             
-            fprintf('Comparing Peak ZT in FullDark:\n');
-            fprintf('  - First Week Mean Peak ZT: %.2f (n=%d days)\n', mean(first_week_peaks), numel(first_week_peaks));
-            fprintf('  - Last Week Mean Peak ZT:  %.2f (n=%d days)\n', mean(last_week_peaks), numel(last_week_peaks));
-            fprintf('Independent T-Test Result:\n');
+            % --- START: Corrected Statistical Test (Paired t-test) ---
+            % We run the paired t-test on the N=8 animal means
+            [h, p_peak, ci, stats_peak] = ttest(first_week_animal_means, last_week_animal_means);
+            % --- END: Corrected Statistical Test ---
+            
+            fprintf('Comparing Mean Peak ZT per animal in FullDark:\n');
+            fprintf('  - First Week Mean Peak ZT (N=%d animals): %.2f\n', sum(~isnan(first_week_animal_means)), mean(first_week_animal_means, 'omitnan'));
+            fprintf('  - Last Week Mean Peak ZT  (N=%d animals): %.2f\n', sum(~isnan(last_week_animal_means)), mean(last_week_animal_means, 'omitnan'));
+            fprintf('Paired T-Test Result:\n'); % Changed from "Independent"
             fprintf('  - T-statistic: %.3f\n', stats_peak.tstat);
             fprintf('  - P-value: %.4f\n', p_peak);
             if h
@@ -722,14 +749,36 @@ end
             disp('  - Not enough data (< 7 days) in FullDark to perform weekly comparison.');
         end
         
-        plot(ax4D, unique_days_FD(~isnan(daily_peak_ZT)), daily_peak_ZT(~isnan(daily_peak_ZT)), 'o-k', 'LineWidth', 1.5);
+        % --- Plotting Pooled Data (for visualization) ---
+        % This recalculates the original plot data, which is fine for visualization
+        daily_peak_ZT_pooled = NaN(length(unique_days_FD),1);
+        for i_day = 1:length(unique_days_FD)
+            day_val = unique_days_FD(i_day);
+            data_this_day_pooled = data_FD(data_FD.DayOfCondition == day_val, :);
+            if isempty(data_this_day_pooled), continue; end
+            hourly_mean_pooled = groupsummary(data_this_day_pooled, ztHourVar, 'mean', current_metric_var);
+            if ~isempty(hourly_mean_pooled)
+                [~,maxIdx] = max(hourly_mean_pooled.(['mean_',current_metric_var])); 
+                if ~isempty(maxIdx)
+                    daily_peak_ZT_pooled(i_day) = hourly_mean_pooled.(ztHourVar)(maxIdx(1)); 
+                end
+            end
+        end
+
+        plot(ax4D, unique_days_FD(~isnan(daily_peak_ZT_pooled)), daily_peak_ZT_pooled(~isnan(daily_peak_ZT_pooled)), 'o-k', 'LineWidth', 1.5);
         title(ax4D, sprintf('Fig 4D: Peak Activity ZT in FullDark (%s)', current_metric_suffix));
         xlabel(ax4D, 'Day in FullDark'); ylabel(ax4D, 'ZT of Peak Activity');
         yticks(ax4D, 0:6:23); ylim(ax4D, [-1 24]); grid(ax4D, 'on');
-        set(ax4D, 'Position', [0.13 0.11 0.775 0.815]); % Add margins for whitespace
+        set(ax4D, 'Position', [0.13 0.11 0.775 0.815]);
+        
         fig_filename = fullfile(savePath_Fig4, sprintf('Figure4D_PeakShift_%s.png', current_metric_suffix));
-        exportgraphics(hFig4D_peak, fig_filename); disp(['Saved: ', fig_filename]); close(hFig4D_peak);
-    catch ME_4D, warning('ErrGen:Fig4D','Error Fig 4D (%s): %s', current_metric_suffix, ME_4D.message); end
+        exportgraphics(hFig4D_peak, fig_filename); 
+        disp(['Saved: ', fig_filename]); 
+        close(hFig4D_peak);
+        
+    catch ME_4D
+        warning('ErrGen:Fig4D','Error Fig 4D (%s): %s', current_metric_suffix, ME_4D.message); 
+    end
 
 %% FIG 4E: Percentage Change (ON vs OFF) Violin Plot
     disp('--- Starting Figure 4E: ON/OFF Pct Change Violins ---');
@@ -814,112 +863,127 @@ end
         end
     
         try
-            disp('--- STATS: Figure 4E (Comparisons to 300Lux control) ---');
+            disp('--- STATS: Figure 4E (Corrected: Paired t-tests & Bonferroni) ---');
             hold(ax4E, 'on');
+
+            % --- 1. Create a single WIDE table to align all animals ---
+            % Get data + Animal IDs from the map.
+            temp_table_300 = grouped_pct_data('300Lux');
+            table_300 = temp_table_300(:, {'Animal', 'PctChange'});
+            table_300.Properties.VariableNames{'PctChange'} = 'Pct_300';
             
-            % Ensure the control group '300Lux' data exists
-            if ~isKey(grouped_pct_data, '300Lux')
-                error('StatsErr:Fig4E', 'Control data (300Lux) not found for stats.');
-            end
-            data_control = grouped_pct_data('300Lux').PctChange;
+            temp_table_1000 = grouped_pct_data('1000Lux');
+            table_1000 = temp_table_1000(:, {'Animal', 'PctChange'});
+            table_1000.Properties.VariableNames{'PctChange'} = 'Pct_1000';
             
-            p_values = containers.Map('KeyType', 'char', 'ValueType', 'double'); % To store p-values
+            temp_table_dark = grouped_pct_data('FullDark');
+            table_dark = temp_table_dark(:, {'Animal', 'PctChange'});
+            table_dark.Properties.VariableNames{'PctChange'} = 'Pct_Dark';
             
-            % 1. Compare 1000Lux vs 300Lux
-            if isKey(grouped_pct_data, '1000Lux')
-                data_1000 = grouped_pct_data('1000Lux').PctChange;
-                if ~isempty(data_control) && ~isempty(data_1000)
-                    [~, p] = ttest2(data_control, data_1000); 
-                    p_values('1000Lux') = p; 
-                    fprintf('Independent T-Test (300Lux vs 1000Lux): p = %.4f\n', p);
-                end
-            end
+            temp_table_end = grouped_pct_data('300LuxEnd');
+            table_end = temp_table_end(:, {'Animal', 'PctChange'});
+            table_end.Properties.VariableNames{'PctChange'} = 'Pct_End';
+
+            % Join them all.
+            paired_table = outerjoin(table_300, table_1000, 'Keys', 'Animal', 'MergeKeys', true);
+            paired_table = outerjoin(paired_table, table_dark, 'Keys', 'Animal', 'MergeKeys', true);
+            paired_table = outerjoin(paired_table, table_end, 'Keys', 'Animal', 'MergeKeys', true);
             
-            % 2. Compare FullDark vs 300Lux
-            if isKey(grouped_pct_data, 'FullDark')
-                data_dark = grouped_pct_data('FullDark').PctChange;
-                if ~isempty(data_control) && ~isempty(data_dark)
-                    [~, p] = ttest2(data_control, data_dark); 
-                    p_values('FullDark') = p; 
-                    fprintf('Independent T-Test (300Lux vs FullDark): p = %.4f\n', p);
-                end
-            end
+            p_values = containers.Map('KeyType', 'char', 'ValueType', 'double');
             
-            % 3. Compare 300LuxEnd vs 300Lux
-            if isKey(grouped_pct_data, '300LuxEnd')
-                data_end = grouped_pct_data('300LuxEnd').PctChange;
-                if ~isempty(data_control) && ~isempty(data_end)
-                    [~, p] = ttest2(data_control, data_end); 
-                    p_values('300LuxEnd') = p; 
-                    fprintf('Independent T-Test (300Lux vs 300LuxEnd): p = %.4f\n', p);
-                end
-            end
-        
-            % --- Plot Significance Bars (4C Style) ---
+            % --- 2. Run PAIRED t-tests (ttest) ---
+            [~, p] = ttest(paired_table.Pct_300, paired_table.Pct_1000); 
+            p_values('1000Lux_vs_300Lux') = p;
+            fprintf('Paired T-Test (300Lux vs 1000Lux) [N=%d]: p = %.4f\n', sum(~isnan(paired_table.Pct_300) & ~isnan(paired_table.Pct_1000)), p);
+
+            [~, p] = ttest(paired_table.Pct_300, paired_table.Pct_Dark); 
+            p_values('FullDark_vs_300Lux') = p;
+            fprintf('Paired T-Test (300Lux vs FullDark) [N=%d]: p = %.4f\n', sum(~isnan(paired_table.Pct_300) & ~isnan(paired_table.Pct_Dark)), p);
+
+            [~, p] = ttest(paired_table.Pct_300, paired_table.Pct_End); 
+            p_values('300LuxEnd_vs_300Lux') = p;
+            fprintf('Paired T-Test (300Lux vs 300LuxEnd) [N=%d]: p = %.4f\n', sum(~isnan(paired_table.Pct_300) & ~isnan(paired_table.Pct_End)), p);
+
+            [~, p] = ttest(paired_table.Pct_Dark, paired_table.Pct_1000);
+            p_values('FullDark_vs_1000Lux') = p;
+            fprintf('Paired T-Test (FullDark vs 1000Lux) [N=%d]: p = %.4f\n', sum(~isnan(paired_table.Pct_Dark) & ~isnan(paired_table.Pct_1000)), p);
+
+            [~, p] = ttest(paired_table.Pct_End, paired_table.Pct_1000);
+            p_values('300LuxEnd_vs_1000Lux') = p;
+            fprintf('Paired T-Test (300LuxEnd vs 1000Lux) [N=%d]: p = %.4f\n', sum(~isnan(paired_table.Pct_End) & ~isnan(paired_table.Pct_1000)), p);
+
+            [~, p] = ttest(paired_table.Pct_Dark, paired_table.Pct_End);
+            p_values('FullDark_vs_300LuxEnd') = p;
+            fprintf('Paired T-Test (FullDark vs 300LuxEnd) [N=%d]: p = %.4f\n', sum(~isnan(paired_table.Pct_Dark) & ~isnan(paired_table.Pct_End)), p);
+
+            % --- 3. Plot Significance Bars (4C Style) ---
             x_control = find(strcmp(groupOrder_4E, '300Lux'));
             x_1000 = find(strcmp(groupOrder_4E, '1000Lux'));
             x_dark = find(strcmp(groupOrder_4E, 'FullDark'));
             x_end = find(strcmp(groupOrder_4E, '300LuxEnd'));
             
-            if isempty(x_control), error('StatsErr:Fig4E', 'Could not find x-position for 300Lux'); end
-        
             y_lims_4E = get(ax4E, 'YLim');
             y_range_4E = diff(y_lims_4E);
             
-            y_level_1 = y_lims_4E(2) + y_range_4E * 0.05; 
-            y_text_1 = y_level_1 + y_range_4E * 0.01;
+            % Define 6 Y-levels
+            y_level_1 = y_lims_4E(2) + y_range_4E * 0.05; y_text_1 = y_level_1 + y_range_4E * 0.01;
+            y_level_2 = y_text_1 + y_range_4E * 0.05; y_text_2 = y_level_2 + y_range_4E * 0.01;
+            y_level_3 = y_text_2 + y_range_4E * 0.05; y_text_3 = y_level_3 + y_range_4E * 0.01;
+            y_level_4 = y_text_3 + y_range_4E * 0.05; y_text_4 = y_level_4 + y_range_4E * 0.01;
+            y_level_5 = y_text_4 + y_range_4E * 0.05; y_text_5 = y_level_5 + y_range_4E * 0.01;
+            y_level_6 = y_text_5 + y_range_4E * 0.05; y_text_6 = y_level_6 + y_range_4E * 0.01;
             
-            y_level_2 = y_text_1 + y_range_4E * 0.05; 
-            y_text_2 = y_level_2 + y_range_4E * 0.01;
-            
-            y_level_3 = y_text_2 + y_range_4E * 0.05; 
-            y_text_3 = y_level_3 + y_range_4E * 0.01;
-            
-            new_y_max_4E = y_text_3 + y_range_4E * 0.03; 
+            new_y_max_4E = y_text_6 + y_range_4E * 0.03; 
             set(ax4E, 'YLim', [y_lims_4E(1), new_y_max_4E]);
-            
-            % 1. Plot 1000Lux vs 300Lux comparison
-            if ~isempty(x_1000) && isKey(p_values, '1000Lux')
-                p = p_values('1000Lux');
-                if p < 0.001, str_sig = '***'; elseif p < 0.01, str_sig = '**'; elseif p < 0.05, str_sig = '*'; else, str_sig = 'n.s.'; end
-                
-                % Only plot if significant 
-                if ~strcmp(str_sig, 'n.s.') 
-                    line_x = [x_control, x_1000];
-                    line_y = [y_level_1, y_level_1];
-                    plot(ax4E, line_x, line_y, 'k-', 'LineWidth', 1.2);
-                    text(ax4E, mean(line_x), y_text_1, str_sig, 'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom', 'FontSize', 10, 'FontWeight', 'bold');
-                end
+                        
+            % 1. 1000Lux vs 300Lux
+            p = p_values('1000Lux_vs_300Lux');
+            if p < 0.001, str_sig = '***'; elseif p < 0.01, str_sig = '**'; elseif p < 0.05, str_sig = '*'; else, str_sig = 'n.s.'; end
+            if ~strcmp(str_sig, 'n.s.')
+                plot(ax4E, [x_control, x_1000], [y_level_1, y_level_1], 'k-', 'LineWidth', 1.2);
+                text(ax4E, mean([x_control, x_1000]), y_text_1, str_sig, 'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom', 'FontSize', 10, 'FontWeight', 'bold');
             end
             
-            % 2. Plot FullDark vs 300Lux comparison
-            if ~isempty(x_dark) && isKey(p_values, 'FullDark')
-                p = p_values('FullDark');
-                if p < 0.001, str_sig = '***'; elseif p < 0.01, str_sig = '**'; elseif p < 0.05, str_sig = '*'; else, str_sig = 'n.s.'; end
-                
-                % Only plot if significant 
-                if ~strcmp(str_sig, 'n.s.') 
-                    line_x = [x_control, x_dark];
-                    line_y = [y_level_2, y_level_2]; % Use the second y-level
-                    plot(ax4E, line_x, line_y, 'k-', 'LineWidth', 1.2);
-                    text(ax4E, mean(line_x), y_text_2, str_sig, 'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom', 'FontSize', 10, 'FontWeight', 'bold');
-                end
+            % 2. FullDark vs 300Lux
+            p = p_values('FullDark_vs_300Lux');
+            if p < 0.001, str_sig = '***'; elseif p < 0.01, str_sig = '**'; elseif p < 0.05, str_sig = '*'; else, str_sig = 'n.s.'; end
+            if ~strcmp(str_sig, 'n.s.')
+                plot(ax4E, [x_control, x_dark], [y_level_2, y_level_2], 'k-', 'LineWidth', 1.2);
+                text(ax4E, mean([x_control, x_dark]), y_text_2, str_sig, 'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom', 'FontSize', 10, 'FontWeight', 'bold');
             end
             
-            % 3. Plot 300LuxEnd vs 300Lux comparison
-            if ~isempty(x_end) && isKey(p_values, '300LuxEnd')
-                p = p_values('300LuxEnd');
-                if p < 0.001, str_sig = '***'; elseif p < 0.01, str_sig = '**'; elseif p < 0.05, str_sig = '*'; else, str_sig = 'n.s.'; end
-                
-                % Only plot if significant 
-                if ~strcmp(str_sig, 'n.s.') 
-                    line_x = [x_control, x_end];
-                    line_y = [y_level_3, y_level_3]; % Use the third y-level
-                    plot(ax4E, line_x, line_y, 'k-', 'LineWidth', 1.2);
-                    text(ax4E, mean(line_x), y_text_3, str_sig, 'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom', 'FontSize', 10, 'FontWeight', 'bold');
-                end
+            % 3. 300LuxEnd vs 300Lux
+            p = p_values('300LuxEnd_vs_300Lux');
+            if p < 0.001, str_sig = '***'; elseif p < 0.01, str_sig = '**'; elseif p < 0.05, str_sig = '*'; else, str_sig = 'n.s.'; end
+            if ~strcmp(str_sig, 'n.s.')
+                plot(ax4E, [x_control, x_end], [y_level_3, y_level_3], 'k-', 'LineWidth', 1.2);
+                text(ax4E, mean([x_control, x_end]), y_text_3, str_sig, 'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom', 'FontSize', 10, 'FontWeight', 'bold');
+            end
+            
+            % 4. FullDark vs 1000Lux
+            p = p_values('FullDark_vs_1000Lux');
+            if p < 0.001, str_sig = '***'; elseif p < 0.01, str_sig = '**'; elseif p < 0.05, str_sig = '*'; else, str_sig = 'n.s.'; end
+            if ~strcmp(str_sig, 'n.s.')
+                plot(ax4E, [x_1000, x_dark], [y_level_4, y_level_4], 'k-', 'LineWidth', 1.2);
+                text(ax4E, mean([x_1000, x_dark]), y_text_4, str_sig, 'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom', 'FontSize', 10, 'FontWeight', 'bold');
             end
 
+            % 5. 300LuxEnd vs 1000Lux
+            p = p_values('300LuxEnd_vs_1000Lux');
+            if p < 0.001, str_sig = '***'; elseif p < 0.01, str_sig = '**'; elseif p < 0.05, str_sig = '*'; else, str_sig = 'n.s.'; end
+            if ~strcmp(str_sig, 'n.s.')
+                plot(ax4E, [x_1000, x_end], [y_level_5, y_level_5], 'k-', 'LineWidth', 1.2);
+                text(ax4E, mean([x_1000, x_end]), y_text_5, str_sig, 'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom', 'FontSize', 10, 'FontWeight', 'bold');
+            end
+
+            % 6. FullDark vs 300LuxEnd
+            p = p_values('FullDark_vs_300LuxEnd');
+            if p < 0.001, str_sig = '***'; elseif p < 0.01, str_sig = '**'; elseif p < 0.05, str_sig = '*'; else, str_sig = 'n.s.'; end
+            if ~strcmp(str_sig, 'n.s.')
+                plot(ax4E, [x_dark, x_end], [y_level_6, y_level_6], 'k-', 'LineWidth', 1.2);
+                text(ax4E, mean([x_dark, x_end]), y_text_6, str_sig, 'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom', 'FontSize', 10, 'FontWeight', 'bold');
+            end
+            
         catch ME_Stats_4E
             warning('ErrGen:Fig4EStats', 'Could not plot significance for Fig 4E: %s', ME_Stats_4E.message);
         end
@@ -1002,12 +1066,14 @@ for met_idx = 1:length(activity_metrics_to_plot)
         exportgraphics(hFig5A_current, fig_filename); disp(['Saved: ', fig_filename]); close(hFig5A_current);
     end
 
-    %% FIG 5B: Diurnality Violins by Sex and Condition (12-Violin Plot)
+%% FIG 5B: Diurnality Violins by Sex and Condition (12-Violin Plot)
     disp('--- Starting Figure 5B: 12-Violin Plot ---');
     try
         if ~exist('violinplot.m','file'),error('ViolinPlotNotFound:Fig5B','violinplot.m not found.');end
         hFig5B_current = figure('Name', sprintf('Fig 5B: Diurnality by Sex and Cond (%s)', current_metric_suffix), 'Visible', 'off', 'Color', 'w', 'Units', 'inches', 'Position', [1 1 12 7]);
         ax5B = axes('Parent', hFig5B_current); hold(ax5B, 'on');
+        
+        % --- (Data preparation and plotting code is unchanged) ---
         plotTable_5B = table();
         conditions_5B = {'300Lux', '1000Lux', 'FullDark'};
         lightPeriods_5B = {'On', 'Off'};
@@ -1054,7 +1120,7 @@ for met_idx = 1:length(activity_metrics_to_plot)
         xtickangle(ax5B, 45);
         set(ax5B, 'Position', [0.1 0.25 0.88 0.65]);
         
-        % --- Statistics for 5B ---
+        % --- START: Statistics for 5B (with Corrections) ---
         fprintf('\n--- STATS: Figure 5B (Paired On vs. Off by Sex/Condition) for %s ---\n', current_metric_suffix);
         tests_5B = { ...
             {'300Lux_On', '300Lux_Off', maleAnimals, 'Male 300Lux (On vs Off)'}, ...
@@ -1064,67 +1130,85 @@ for met_idx = 1:length(activity_metrics_to_plot)
             {'FullDark_On', 'FullDark_Off', intersect(maleAnimals, fourCondAnimals), 'Male FullDark (On vs Off)'}, ...
             {'FullDark_On', 'FullDark_Off', intersect(femaleAnimals, fourCondAnimals), 'Female FullDark (On vs Off)'} ...
         };
-        for i_test = 1:length(tests_5B)
-            idx = ismember(all_animal_means_5B.Animal, tests_5B{i_test}{3});
-            [~, p] = ttest(all_animal_means_5B.(tests_5B{i_test}{1})(idx), all_animal_means_5B.(tests_5B{i_test}{2})(idx));
-            fprintf('Paired T-Test | %s: p = %.4f (N=%.0f)\n', tests_5B{i_test}{4}, p, sum(idx));
+        
+        num_tests_5B = length(tests_5B);
+        bonf_alpha_5B = 0.05 / num_tests_5B;
+        fprintf('Applying Bonferroni correction for %d tests. New alpha = %.4f\n', num_tests_5B, bonf_alpha_5B);
+        
+        for i_test = 1:num_tests_5B
+            test_info = tests_5B{i_test};
+            group_name = test_info{4};
+            idx = ismember(all_animal_means_5B.Animal, test_info{3});
+            N = sum(idx);
+            
+            if N < 5 % Set a reasonable minimum N for a t-test
+                fprintf('Paired T-Test | %s: SKIPPED (N=%.0f is too low for a valid test)\n', group_name, N);
+                continue; % Skip this test
+            end
+
+            [~, p] = ttest(all_animal_means_5B.(test_info{1})(idx), all_animal_means_5B.(test_info{2})(idx));
+            
+            sig_str = 'n.s.';
+            if p < bonf_alpha_5B
+                sig_str = 'SIGNIFICANT';
+            end
+            fprintf('Paired T-Test | %s: p = %.4f (N=%.0f) - %s after correction\n', group_name, p, N, sig_str);
         end
+        
         fprintf('\n--- STATS: Figure 5B (2-Way Repeated Measures ANOVA) for %s ---\n', current_metric_suffix);
         stat_table_clean = all_animal_means_5B;
         stat_table_clean.Properties.VariableNames = matlab.lang.makeValidName(stat_table_clean.Properties.VariableNames);
+        
         for i_sex = 1:length(sex_labels)
             sex_str = sex_labels{i_sex};
             sex_animals = sex_groups{i_sex};
             t_wide_1 = stat_table_clean(ismember(string(stat_table_clean.Animal), string(sex_animals)), :);
+            N_anova_1 = height(t_wide_1);
+
+            fprintf('  [DEBUG] N-count for %s (300v1000Lux): %d\n', sex_str, N_anova_1);
             
-            % --- DEBUG: Check N-count for this ANOVA ---
-            fprintf('  [DEBUG] N-count for %s (300v1000Lux): %d\n', sex_str, height(t_wide_1));
-            
+            % This ANOVA (N=6) is fine.
             withinDesign_1 = table({'x300Lux';'x300Lux';'x1000Lux';'x1000Lux'}, {'On';'Off';'On';'Off'}, 'VariableNames', {'Condition', 'LightPeriod'});
             rm_formula_1 = 'x300Lux_On-x1000Lux_Off ~ 1';
-            withinDesign_1 = table({'x300Lux';'x300Lux';'x1000Lux';'x1000Lux'}, {'On';'Off';'On';'Off'}, 'VariableNames', {'Condition', 'LightPeriod'});
-            rm_formula_1 = 'x300Lux_On-x1000Lux_Off ~ 1'; 
             rm_1 = fitrm(t_wide_1, rm_formula_1, 'WithinDesign', withinDesign_1);
             ranova_tbl_1 = ranova(rm_1, 'WithinModel', 'Condition*LightPeriod');
-
-            % Search for the exact interaction term
             p_idx_1 = strcmp(ranova_tbl_1.Properties.RowNames, 'Condition:LightPeriod');
-            if ~any(p_idx_1) % Fallback if exact name fails (e.g., 'Condition:LightPeriod:Time')
-                 p_idx_1 = contains(ranova_tbl_1.Properties.RowNames, 'Condition:LightPeriod');
-            end
-            
+            if ~any(p_idx_1), p_idx_1 = contains(ranova_tbl_1.Properties.RowNames, 'Condition:LightPeriod'); end
             p_interaction_1_all = ranova_tbl_1.pValue(p_idx_1);
-            p_interaction_1 = p_interaction_1_all(1); % Force to be scalar (take first match)
+            p_interaction_1 = p_interaction_1_all(1);
+            fprintf('ANOVA (%s, 300 vs 1000Lux): Condition x LightPeriod interaction p = %.4f (N=%.0f)\n', sex_str, p_interaction_1, N_anova_1);
             
-            fprintf('ANOVA (%s, 300 vs 1000Lux): Condition x LightPeriod interaction p = %.4f (N=%.0f)\n', sex_str, p_interaction_1, height(t_wide_1));
             four_cond_sex_animals = intersect(sex_animals, fourCondAnimals);
-            
             t_wide_2 = stat_table_clean(ismember(string(stat_table_clean.Animal), string(four_cond_sex_animals)), :);
-            
-            % --- DEBUG: Check N-count for this ANOVA ---
-            fprintf('  [DEBUG] N-count for %s (All 3 Cond): %d\n', sex_str, height(t_wide_2));
+            N_anova_2 = height(t_wide_2);
 
-            withinDesign_2 = table({'x300Lux';'x300Lux';'x1000Lux';'x1000Lux';'FullDark';'FullDark'}, {'On';'Off';'On';'Off';'On';'Off'}, 'VariableNames', {'Condition', 'LightPeriod'});
-            withinDesign_2 = table({'x300Lux';'x300Lux';'x1000Lux';'x1000Lux';'FullDark';'FullDark'}, {'On';'Off';'On';'Off';'On';'Off'}, 'VariableNames', {'Condition', 'LightPeriod'});
-            rm_formula_2 = 'x300Lux_On-FullDark_Off ~ 1';
-            rm_2 = fitrm(t_wide_2, rm_formula_2, 'WithinDesign', withinDesign_2);
-            ranova_tbl_2 = ranova(rm_2, 'WithinModel', 'Condition*LightPeriod');
-            
-            % Search for the exact interaction term
-            p_idx_2 = strcmp(ranova_tbl_2.Properties.RowNames, 'Condition:LightPeriod');
-             if ~any(p_idx_2) % Fallback if exact name fails
-                 p_idx_2 = contains(ranova_tbl_2.Properties.RowNames, 'Condition:LightPeriod');
+            fprintf('  [DEBUG] N-count for %s (All 3 Cond): %d\n', sex_str, N_anova_2);
+
+            if N_anova_2 < 5 % Set minimum N for RM ANOVA
+                fprintf('ANOVA (%s, All 3 Conditions): SKIPPED (N=%.0f is too low for a valid RM ANOVA)\n', sex_str, N_anova_2);
+            else
+                % This code will now only run for Females (N=5)
+                withinDesign_2 = table({'x300Lux';'x300Lux';'x1000Lux';'x1000Lux';'FullDark';'FullDark'}, {'On';'Off';'On';'Off';'On';'Off'}, 'VariableNames', {'Condition', 'LightPeriod'});
+                rm_formula_2 = 'x300Lux_On-FullDark_Off ~ 1';
+                rm_2 = fitrm(t_wide_2, rm_formula_2, 'WithinDesign', withinDesign_2);
+                ranova_tbl_2 = ranova(rm_2, 'WithinModel', 'Condition*LightPeriod');
+                
+                p_idx_2 = strcmp(ranova_tbl_2.Properties.RowNames, 'Condition:LightPeriod');
+                 if ~any(p_idx_2), p_idx_2 = contains(ranova_tbl_2.Properties.RowNames, 'Condition:LightPeriod'); end
+                p_interaction_2_all = ranova_tbl_2.pValue(p_idx_2);
+                p_interaction_2 = p_interaction_2_all(1);
+                fprintf('ANOVA (%s, All 3 Conditions): Condition x LightPeriod interaction p = %.4f (N=%.0f)\n', sex_str, p_interaction_2, N_anova_2);
             end
-
-            p_interaction_2_all = ranova_tbl_2.pValue(p_idx_2);
-            p_interaction_2 = p_interaction_2_all(1); % Force to be scalar (take first match)
-
-            fprintf('ANOVA (%s, All 3 Conditions): Condition x LightPeriod interaction p = %.4f (N=%.0f)\n', sex_str, p_interaction_2, height(t_wide_2));
         end
-
+        
         fig_filename = fullfile(savePath_Fig5, sprintf('Figure5B_Violins_12group_%s.png', current_metric_suffix));
-        exportgraphics(hFig5B_current, fig_filename); disp(['Saved: ', fig_filename]); close(hFig5B_current);
-    catch ME_5B, warning('ErrGen:Fig5B','Error Fig 5B (%s): %s', current_metric_suffix, ME_5B.message); end
+        exportgraphics(hFig5B_current, fig_filename); 
+        disp(['Saved: ', fig_filename]); 
+        close(hFig5B_current);
+        
+    catch ME_5B
+        warning('ErrGen:Fig5B','Error Fig 5B (%s): %s', current_metric_suffix, ME_5B.message); 
+    end
 
     %% FIG 5C: Difference Bar Plot (Rebuilt)
     disp('--- Starting Figure 5C: Difference Plot ---');
