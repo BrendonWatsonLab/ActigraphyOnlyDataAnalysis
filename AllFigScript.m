@@ -1120,7 +1120,7 @@ for met_idx = 1:length(activity_metrics_to_plot)
         xtickangle(ax5B, 45);
         set(ax5B, 'Position', [0.1 0.25 0.88 0.65]);
         
-        % --- START: Statistics for 5B (with Corrections) ---
+        % --- (Original Statistics for 5B - Corrected) ---
         fprintf('\n--- STATS: Figure 5B (Paired On vs. Off by Sex/Condition) for %s ---\n', current_metric_suffix);
         tests_5B = { ...
             {'300Lux_On', '300Lux_Off', maleAnimals, 'Male 300Lux (On vs Off)'}, ...
@@ -1130,76 +1130,98 @@ for met_idx = 1:length(activity_metrics_to_plot)
             {'FullDark_On', 'FullDark_Off', intersect(maleAnimals, fourCondAnimals), 'Male FullDark (On vs Off)'}, ...
             {'FullDark_On', 'FullDark_Off', intersect(femaleAnimals, fourCondAnimals), 'Female FullDark (On vs Off)'} ...
         };
-        
         num_tests_5B = length(tests_5B);
         bonf_alpha_5B = 0.05 / num_tests_5B;
         fprintf('Applying Bonferroni correction for %d tests. New alpha = %.4f\n', num_tests_5B, bonf_alpha_5B);
-        
         for i_test = 1:num_tests_5B
-            test_info = tests_5B{i_test};
-            group_name = test_info{4};
-            idx = ismember(all_animal_means_5B.Animal, test_info{3});
-            N = sum(idx);
-            
-            if N < 5 % Set a reasonable minimum N for a t-test
-                fprintf('Paired T-Test | %s: SKIPPED (N=%.0f is too low for a valid test)\n', group_name, N);
-                continue; % Skip this test
-            end
-
+            test_info = tests_5B{i_test}; group_name = test_info{4};
+            idx = ismember(all_animal_means_5B.Animal, test_info{3}); N = sum(idx);
+            if N < 5, fprintf('Paired T-Test | %s: SKIPPED (N=%.0f is too low for a valid test)\n', group_name, N); continue; end
             [~, p] = ttest(all_animal_means_5B.(test_info{1})(idx), all_animal_means_5B.(test_info{2})(idx));
-            
-            sig_str = 'n.s.';
-            if p < bonf_alpha_5B
-                sig_str = 'SIGNIFICANT';
-            end
+            sig_str = 'n.s.'; if p < bonf_alpha_5B, sig_str = 'SIGNIFICANT'; end
             fprintf('Paired T-Test | %s: p = %.4f (N=%.0f) - %s after correction\n', group_name, p, N, sig_str);
         end
-        
         fprintf('\n--- STATS: Figure 5B (2-Way Repeated Measures ANOVA) for %s ---\n', current_metric_suffix);
         stat_table_clean = all_animal_means_5B;
         stat_table_clean.Properties.VariableNames = matlab.lang.makeValidName(stat_table_clean.Properties.VariableNames);
-        
         for i_sex = 1:length(sex_labels)
-            sex_str = sex_labels{i_sex};
-            sex_animals = sex_groups{i_sex};
-            t_wide_1 = stat_table_clean(ismember(string(stat_table_clean.Animal), string(sex_animals)), :);
-            N_anova_1 = height(t_wide_1);
-
+            sex_str = sex_labels{i_sex}; sex_animals = sex_groups{i_sex};
+            t_wide_1 = stat_table_clean(ismember(string(stat_table_clean.Animal), string(sex_animals)), :); N_anova_1 = height(t_wide_1);
             fprintf('  [DEBUG] N-count for %s (300v1000Lux): %d\n', sex_str, N_anova_1);
-            
-            % This ANOVA (N=6) is fine.
             withinDesign_1 = table({'x300Lux';'x300Lux';'x1000Lux';'x1000Lux'}, {'On';'Off';'On';'Off'}, 'VariableNames', {'Condition', 'LightPeriod'});
             rm_formula_1 = 'x300Lux_On-x1000Lux_Off ~ 1';
             rm_1 = fitrm(t_wide_1, rm_formula_1, 'WithinDesign', withinDesign_1);
             ranova_tbl_1 = ranova(rm_1, 'WithinModel', 'Condition*LightPeriod');
             p_idx_1 = strcmp(ranova_tbl_1.Properties.RowNames, 'Condition:LightPeriod');
             if ~any(p_idx_1), p_idx_1 = contains(ranova_tbl_1.Properties.RowNames, 'Condition:LightPeriod'); end
-            p_interaction_1_all = ranova_tbl_1.pValue(p_idx_1);
-            p_interaction_1 = p_interaction_1_all(1);
+            p_interaction_1_all = ranova_tbl_1.pValue(p_idx_1); p_interaction_1 = p_interaction_1_all(1);
             fprintf('ANOVA (%s, 300 vs 1000Lux): Condition x LightPeriod interaction p = %.4f (N=%.0f)\n', sex_str, p_interaction_1, N_anova_1);
-            
             four_cond_sex_animals = intersect(sex_animals, fourCondAnimals);
-            t_wide_2 = stat_table_clean(ismember(string(stat_table_clean.Animal), string(four_cond_sex_animals)), :);
-            N_anova_2 = height(t_wide_2);
-
+            t_wide_2 = stat_table_clean(ismember(string(stat_table_clean.Animal), string(four_cond_sex_animals)), :); N_anova_2 = height(t_wide_2);
             fprintf('  [DEBUG] N-count for %s (All 3 Cond): %d\n', sex_str, N_anova_2);
-
-            if N_anova_2 < 5 % Set minimum N for RM ANOVA
+            if N_anova_2 < 5
                 fprintf('ANOVA (%s, All 3 Conditions): SKIPPED (N=%.0f is too low for a valid RM ANOVA)\n', sex_str, N_anova_2);
             else
-                % This code will now only run for Females (N=5)
                 withinDesign_2 = table({'x300Lux';'x300Lux';'x1000Lux';'x1000Lux';'FullDark';'FullDark'}, {'On';'Off';'On';'Off';'On';'Off'}, 'VariableNames', {'Condition', 'LightPeriod'});
                 rm_formula_2 = 'x300Lux_On-FullDark_Off ~ 1';
                 rm_2 = fitrm(t_wide_2, rm_formula_2, 'WithinDesign', withinDesign_2);
                 ranova_tbl_2 = ranova(rm_2, 'WithinModel', 'Condition*LightPeriod');
-                
                 p_idx_2 = strcmp(ranova_tbl_2.Properties.RowNames, 'Condition:LightPeriod');
                  if ~any(p_idx_2), p_idx_2 = contains(ranova_tbl_2.Properties.RowNames, 'Condition:LightPeriod'); end
-                p_interaction_2_all = ranova_tbl_2.pValue(p_idx_2);
-                p_interaction_2 = p_interaction_2_all(1);
+                p_interaction_2_all = ranova_tbl_2.pValue(p_idx_2); p_interaction_2 = p_interaction_2_all(1);
                 fprintf('ANOVA (%s, All 3 Conditions): Condition x LightPeriod interaction p = %.4f (N=%.0f)\n', sex_str, p_interaction_2, N_anova_2);
             end
         end
+        
+        % --- START: NEW STATS BLOCK FOR FIG 5B (Cross-Condition) ---
+        if strcmp(current_metric_var, "NormalizedActivity")
+            try
+                disp('--- STATS: Figure 5B (Cross-Condition Paired T-Tests) for NormalizedActivity ---');
+                hold(ax5B, 'on');
+                
+                % 1. Female: 300Lux-On vs 1000Lux-On
+                idx_f = ismember(all_animal_means_5B.Animal, femaleAnimals);
+                [~, p_f] = ttest(all_animal_means_5B.('300Lux_On')(idx_f), all_animal_means_5B.('1000Lux_On')(idx_f));
+                fprintf('Paired T-Test | Female 300-On vs 1000-On: p = %.4f (N=%.0f)\n', p_f, sum(idx_f));
+
+                % 2. Male: 300Lux-On vs 1000Lux-On
+                idx_m = ismember(all_animal_means_5B.Animal, maleAnimals);
+                [~, p_m] = ttest(all_animal_means_5B.('300Lux_On')(idx_m), all_animal_means_5B.('1000Lux_On')(idx_m));
+                fprintf('Paired T-Test | Male 300-On vs 1000-On: p = %.4f (N=%.0f)\n', p_m, sum(idx_m));
+
+                % --- Plotting ---
+                y_lims = get(ax5B, 'YLim'); y_range = diff(y_lims);
+                y_bar = y_lims(2) + y_range * 0.05; y_text = y_bar + y_range * 0.01;
+                new_y_max = y_text + y_range * 0.03;
+                set(ax5B, 'YLim', [y_lims(1), new_y_max]);
+
+                % Plot Female Bar
+                x_f_300 = find(strcmp(finalGroupOrder, '300Lux-On-Female'));
+                x_f_1000 = find(strcmp(finalGroupOrder, '1000Lux-On-Female'));
+                if ~isempty(x_f_300) && ~isempty(x_f_1000)
+                    if p_f < 0.001, str = '***'; elseif p_f < 0.01, str = '**'; elseif p_f < 0.05, str = '*'; else, str = 'n.s.'; end
+                    if ~strcmp(str, 'n.s.')
+                        plot(ax5B, [x_f_300, x_f_1000], [y_bar, y_bar], 'k-', 'LineWidth', 1.2);
+                        text(ax5B, mean([x_f_300, x_f_1000]), y_text, str, 'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom', 'FontSize', 10, 'FontWeight', 'bold');
+                    end
+                end
+                
+                % Plot Male Bar
+                x_m_300 = find(strcmp(finalGroupOrder, '300Lux-On-Male'));
+                x_m_1000 = find(strcmp(finalGroupOrder, '1000Lux-On-Male'));
+                if ~isempty(x_m_300) && ~isempty(x_m_1000)
+                    if p_m < 0.001, str = '***'; elseif p_m < 0.01, str = '**'; elseif p_m < 0.05, str = '*'; else, str = 'n.s.'; end
+                    if ~strcmp(str, 'n.s.')
+                        plot(ax5B, [x_m_300, x_m_1000], [y_bar, y_bar], 'k-', 'LineWidth', 1.2);
+                        text(ax5B, mean([x_m_300, x_m_1000]), y_text, str, 'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom', 'FontSize', 10, 'FontWeight', 'bold');
+                    end
+                end
+
+            catch ME_5B_extra
+                warning('ErrGen:Fig5BStatsExtra', 'Could not plot extra stats for Fig 5B: %s', ME_5B_extra.message);
+            end
+        end
+        % --- END: NEW STATS BLOCK ---
         
         fig_filename = fullfile(savePath_Fig5, sprintf('Figure5B_Violins_12group_%s.png', current_metric_suffix));
         exportgraphics(hFig5B_current, fig_filename); 
@@ -1246,12 +1268,10 @@ for met_idx = 1:length(activity_metrics_to_plot)
         pct_change_table = all_animal_means_5B; 
         pct_change_table.Sex = categorical(ismember(pct_change_table.Animal, maleAnimals), [0, 1], {'Female', 'Male'});
         
-        % Calculate Percent Change for all 4 conditions
         pct_change_table.PctChg_300Lux = (pct_change_table.('300Lux_On') - pct_change_table.('300Lux_Off')) ./ pct_change_table.('300Lux_Off') * 100;
         pct_change_table.PctChg_1000Lux = (pct_change_table.('1000Lux_On') - pct_change_table.('1000Lux_Off')) ./ pct_change_table.('1000Lux_Off') * 100;
         pct_change_table.PctChg_FullDark = (pct_change_table.('FullDark_On') - pct_change_table.('FullDark_Off')) ./ pct_change_table.('FullDark_Off') * 100;
         
-        % (Assumes '300LuxEnd_On'/'300LuxEnd_Off' are in all_animal_means_5B)
         if all(ismember({'300LuxEnd_On', '300LuxEnd_Off'}, pct_change_table.Properties.VariableNames))
             pct_change_table.PctChg_300LuxEnd = (pct_change_table.('300LuxEnd_On') - pct_change_table.('300LuxEnd_Off')) ./ pct_change_table.('300LuxEnd_Off') * 100;
             conditions_5E = {'300Lux', '1000Lux', 'FullDark', '300LuxEnd'};
@@ -1259,29 +1279,21 @@ for met_idx = 1:length(activity_metrics_to_plot)
             warning('Fig5E:MissingData', '300LuxEnd data not found in table. Plotting 3 conditions only.');
             conditions_5E = {'300Lux', '1000Lux', 'FullDark'};
         end
-
-        plotData_5E = [];
-        groupData_5E = [];
-        groupOrder_5E = {};
         
+        % --- (Data Prep for 8 Violins) ---
+        plotData_5E = []; groupData_5E = []; groupOrder_5E = {};
         for i_cond = 1:length(conditions_5E)
             cond_name = conditions_5E{i_cond};
-            cond_col_name = ['PctChg_', cond_name]; % e.g., 'PctChg_300Lux'
-            
-            % Handle animal subsetting for FullDark/300LuxEnd
+            cond_col_name = ['PctChg_', cond_name]; 
             animal_idx = true(height(pct_change_table), 1);
             if ismember(cond_name, ["FullDark", "300LuxEnd"])
                 animal_idx = ismember(pct_change_table.Animal, fourCondAnimals);
             end
-            
             for sex = ["Female", "Male"]
                 group_name = [cond_name, '-', char(sex)];
                 sex_idx = (pct_change_table.Sex == sex);
-                
-                % Combine all filters
                 final_idx = animal_idx & sex_idx & isfinite(pct_change_table.(cond_col_name));
                 data_segment = pct_change_table(final_idx, :);
-                
                 if ~isempty(data_segment)
                     plotData_5E = [plotData_5E; data_segment.(cond_col_name)];
                     groupData_5E = [groupData_5E; repmat(categorical({group_name}), height(data_segment), 1)];
@@ -1289,39 +1301,25 @@ for met_idx = 1:length(activity_metrics_to_plot)
                 end
             end
         end
-
+        
         % 3. Create Base Gray Violin Plot
         violinplot(plotData_5E, groupData_5E, 'Parent', ax5E, 'GroupOrder', groupOrder_5E, 'ViolinColor', grayColor, 'ShowData', false);
         
-        % 4. Overlay Individual Data Points (Males vs Females)
+        % 4. Overlay Individual Data Points
         jitterAmount = 0.15;
         for i_group = 1:length(groupOrder_5E)
             group_label = groupOrder_5E{i_group};
-            
-            % Parse the group label
-            parts = split(group_label, '-');
-            cond_str = string(parts{1});
-            sex_str = string(parts{2});
-            
+            parts = split(group_label, '-'); cond_str = string(parts{1}); sex_str = string(parts{2});
             cond_col_name = ['PctChg_', char(cond_str)];
-            
-            % Determine animal list
             animals_for_cond = allAnimals;
             if ismember(cond_str, ["FullDark", "300LuxEnd"]), animals_for_cond = fourCondAnimals; end
-            
-            % Get the correct data
             data_idx = pct_change_table.Sex == sex_str & ...
                          ismember(pct_change_table.Animal, animals_for_cond) & ...
                          isfinite(pct_change_table.(cond_col_name));
             data_points = pct_change_table.(cond_col_name)(data_idx);
-
             if ~isempty(data_points)
-                % Jitter x-positions
                 x_scatter = i_group + (rand(length(data_points), 1) - 0.5) * jitterAmount;
-                
-                % Determine scatter color based on sex
                 scatterColor = (sex_str == "Male") * maleColor + (sex_str == "Female") * femaleColor;
-                
                 scatter(ax5E, x_scatter, data_points, 40, scatterColor, 'filled', 'MarkerFaceAlpha', 0.8, 'HandleVisibility', 'off');
             end
         end
@@ -1329,78 +1327,110 @@ for met_idx = 1:length(activity_metrics_to_plot)
         % 5. Reference line at 0%
         yline(ax5E, 0, 'k--');
         
-        % 6. Statistics (M vs F for each condition)
-        fprintf('\n--- STATS: Figure 5E (Male vs Female Pct Change) for %s ---\n', current_metric_suffix);
-        p_values_5E = containers.Map;
-        
-        for cond_name_str = conditions_5E
-            cond_name = char(cond_name_str);
-            cond_col_name = ['PctChg_', cond_name];
-            
-            animals_for_cond = allAnimals;
-            if ismember(cond_name, ["FullDark", "300LuxEnd"]), animals_for_cond = fourCondAnimals; end
-            
-            male_data = pct_change_table.(cond_col_name)(pct_change_table.Sex=='Male' & ismember(pct_change_table.Animal, animals_for_cond) & isfinite(pct_change_table.(cond_col_name)));
-            female_data = pct_change_table.(cond_col_name)(pct_change_table.Sex=='Female' & ismember(pct_change_table.Animal, animals_for_cond) & isfinite(pct_change_table.(cond_col_name)));
-            
-            if ~isempty(male_data) && ~isempty(female_data)
-                [~,p] = ttest2(male_data, female_data);
-                p_values_5E(cond_name) = p;
-                fprintf('Independent T-Test | %s PctChange (M vs F): p = %.4f\n', cond_name, p);
-            else
-                fprintf('Skipping T-Test for %s: insufficient M or F data.\n', cond_name);
-            end
-        end
-
+        % --- START: MODIFIED STATS BLOCK FOR FIG 5E ---
         try
-            disp('--- Plotting Significance Bars for Fig 5E ---');
+            disp('--- STATS: Figure 5E (M vs F Pct Change) ---');
             hold(ax5E, 'on');
             
-            y_lims_5E = get(ax5E, 'YLim');
-            y_range_5E = diff(y_lims_5E);
-            
+            p_values_5E_MvF = containers.Map; % M vs F tests
+            y_lims_5E = get(ax5E, 'YLim'); y_range_5E = diff(y_lims_5E);
             y_bar_level = y_lims_5E(2) + y_range_5E * 0.05; 
             y_text_level = y_bar_level + y_range_5E * 0.01; 
-            
             new_y_max_5E = y_text_level + y_range_5E * 0.03;
-            set(ax5E, 'YLim', [y_lims_5E(1), new_y_max_5E]);
-            
-            % Loop through the conditions and plot bars between pairs
+            set(ax5E, 'YLim', [y_lims_5E(1), new_y_max_5E]); % Set YLim for first bar level
+
+            for cond_name_str = conditions_5E
+                cond_name = char(cond_name_str);
+                cond_col_name = ['PctChg_', cond_name];
+                animals_for_cond = allAnimals;
+                if ismember(cond_name, ["FullDark", "300LuxEnd"]), animals_for_cond = fourCondAnimals; end
+                
+                male_data = pct_change_table.(cond_col_name)(pct_change_table.Sex=='Male' & ismember(pct_change_table.Animal, animals_for_cond) & isfinite(pct_change_table.(cond_col_name)));
+                female_data = pct_change_table.(cond_col_name)(pct_change_table.Sex=='Female' & ismember(pct_change_table.Animal, animals_for_cond) & isfinite(pct_change_table.(cond_col_name)));
+                
+                if ~isempty(male_data) && ~isempty(female_data)
+                    [~,p] = ttest2(male_data, female_data);
+                    p_values_5E_MvF(cond_name) = p;
+                    fprintf('Independent T-Test | %s PctChange (M vs F): p = %.4f\n', cond_name, p);
+                else
+                    fprintf('Skipping T-Test for %s: insufficient M or F data.\n', cond_name);
+                end
+            end
+
+            % --- Plot M vs F bars (Level 1) ---
             for i_cond = 1:length(conditions_5E)
                 cond_name = conditions_5E{i_cond};
-                
-                if isKey(p_values_5E, cond_name)
-                    p = p_values_5E(cond_name);
-                    
-                    % Find x-positions for this pair
+                if isKey(p_values_5E_MvF, cond_name)
+                    p = p_values_5E_MvF(cond_name);
                     x_female = find(strcmp(groupOrder_5E, [cond_name, '-Female']));
                     x_male = find(strcmp(groupOrder_5E, [cond_name, '-Male']));
-                    
                     if ~isempty(x_female) && ~isempty(x_male)
                         if p < 0.001, str_sig = '***'; elseif p < 0.01, str_sig = '**'; elseif p < 0.05, str_sig = '*'; else, str_sig = 'n.s.'; end
-                        
                         if ~strcmp(str_sig, 'n.s.')
-                            line_x = [x_female, x_male];
-                            line_y = [y_bar_level, y_bar_level];
-                            plot(ax5E, line_x, line_y, 'k-', 'LineWidth', 1.2);
-                            text(ax5E, mean(line_x), y_text_level, str_sig, 'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom', 'FontSize', 10, 'FontWeight', 'bold');
+                            plot(ax5E, [x_female, x_male], [y_bar_level, y_bar_level], 'k-', 'LineWidth', 1.2);
+                            text(ax5E, mean([x_female, x_male]), y_text_level, str_sig, 'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom', 'FontSize', 10, 'FontWeight', 'bold');
                         end
                     end
                 end
             end
             
+            % --- START: NEW STATS (Cross-Condition) for PixelDiff ---
+            if strcmp(current_metric_var, "SelectedPixelDifference")
+                disp('--- STATS: Figure 5E (Cross-Condition Paired T-Tests) for PixelDiff ---');
+                
+                % Define new Y-levels based on the *current* max Y
+                y_lims_2 = get(ax5E, 'YLim'); y_range_2 = diff(y_lims_2);
+                y_bar_level_2 = y_lims_2(2) + y_range_2 * 0.05;
+                y_text_level_2 = y_bar_level_2 + y_range_2 * 0.01;
+                new_y_max_2 = y_text_level_2 + y_range_2 * 0.03;
+                set(ax5E, 'YLim', [y_lims_2(1), new_y_max_2]); % Set new YLim for second bar level
+
+                % 1. Female: 300Lux PctChg vs 1000Lux PctChg
+                idx_f = ismember(pct_change_table.Animal, femaleAnimals);
+                [~, p_f] = ttest(pct_change_table.PctChg_300Lux(idx_f), pct_change_table.PctChg_1000Lux(idx_f));
+                fprintf('Paired T-Test | Female 300-PctChg vs 1000-PctChg: p = %.4f (N=%.0f)\n', p_f, sum(idx_f & ~isnan(pct_change_table.PctChg_300Lux) & ~isnan(pct_change_table.PctChg_1000Lux)));
+                
+                % 2. Male: 300Lux PctChg vs 1000Lux PctChg
+                idx_m = ismember(pct_change_table.Animal, maleAnimals);
+                [~, p_m] = ttest(pct_change_table.PctChg_300Lux(idx_m), pct_change_table.PctChg_1000Lux(idx_m));
+                fprintf('Paired T-Test | Male 300-PctChg vs 1000-PctChg: p = %.4f (N=%.0f)\n', p_m, sum(idx_m & ~isnan(pct_change_table.PctChg_300Lux) & ~isnan(pct_change_table.PctChg_1000Lux)));
+
+                % --- Plot Female Bar (Level 2) ---
+                x_f_300 = find(strcmp(groupOrder_5E, '300Lux-Female'));
+                x_f_1000 = find(strcmp(groupOrder_5E, '1000Lux-Female'));
+                if ~isempty(x_f_300) && ~isempty(x_f_1000)
+                    if p_f < 0.001, str = '***'; elseif p_f < 0.01, str = '**'; elseif p_f < 0.05, str = '*'; else, str = 'n.s.'; end
+                    if ~strcmp(str, 'n.s.')
+                        plot(ax5E, [x_f_300, x_f_1000], [y_bar_level_2, y_bar_level_2], 'k-', 'LineWidth', 1.2);
+                        text(ax5E, mean([x_f_300, x_f_1000]), y_text_level_2, str, 'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom', 'FontSize', 10, 'FontWeight', 'bold');
+                    end
+                end
+                
+                % --- Plot Male Bar (Level 2) ---
+                x_m_300 = find(strcmp(groupOrder_5E, '300Lux-Male'));
+                x_m_1000 = find(strcmp(groupOrder_5E, '1000Lux-Male'));
+                if ~isempty(x_m_300) && ~isempty(x_m_1000)
+                    if p_m < 0.001, str = '***'; elseif p_m < 0.01, str = '**'; elseif p_m < 0.05, str = '*'; else, str = 'n.s.'; end
+                    if ~strcmp(str, 'n.s.')
+                        plot(ax5E, [x_m_300, x_m_1000], [y_bar_level_2, y_bar_level_2], 'k-', 'LineWidth', 1.2);
+                        text(ax5E, mean([x_m_300, x_m_1000]), y_text_level_2, str, 'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom', 'FontSize', 10, 'FontWeight', 'bold');
+                    end
+                end
+            end
+            % --- END: NEW STATS ---
+            
         catch ME_Stats_5E
             warning('ErrGen:Fig5EStats', 'Could not plot significance for Fig 5E: %s', ME_Stats_5E.message);
         end
+        % --- END: MODIFIED STATS BLOCK ---
 
         % 8. Formatting and Saving
         title(ax5E, sprintf('Fig 5E: ON:OFF %% Change by Sex and Condition (%s)', current_metric_suffix));
         ylabel(ax5E, '% Change (ON vs OFF)');
         
-        % Set Ticks AND Labels
         set(ax5E, 'XTick', 1:length(groupOrder_5E)); 
         set(ax5E, 'XTickLabel', groupOrder_5E);
-        xtickangle(ax5E, 45); % Rotate labels to prevent overlap
+        xtickangle(ax5E, 45); 
         
         grid(ax5E, 'on');
         
@@ -1411,6 +1441,134 @@ for met_idx = 1:length(activity_metrics_to_plot)
         
     catch ME_5E
         warning('ErrGen:Fig5E','Error Fig 5E (%s): %s', current_metric_suffix, ME_5E.message); 
+    end
+
+    %% FIG 5F: (NEW) Shift in Activity Peaks During FullDark by Sex
+    disp('--- Starting Figure 5F: Peak Shift by Sex ---');
+    try
+        hFig5F_peak = figure('Name', sprintf('Fig 5F: Peak Shift in FullDark by Sex (%s)', current_metric_suffix), 'Visible', 'off', 'Color', 'w');
+        ax5F = axes('Parent', hFig5F_peak);
+        hold(ax5F, 'on'); % Hold on from the start
+        
+        % We will loop through Males and Females
+        % Assumes sex_labels = {'Female', 'Male'} and sex_groups = {femaleAnimals, maleAnimals} exist
+        sex_colors = {femaleColor, maleColor}; 
+
+        fprintf('\n--- STATS: Figure 5F (Paired T-Test, First vs. Last Week by Sex) ---\n');
+        
+        for i_sex = 1:length(sex_labels)
+            sex_str = sex_labels{i_sex};
+            sex_animals_all = sex_groups{i_sex};
+            sex_color = sex_colors{i_sex};
+            
+            % Get the N=3 (Male) or N=5 (Female) animals
+            animals_to_test = intersect(sex_animals_all, fourCondAnimals);
+            N_sex = length(animals_to_test);
+            
+            if N_sex == 0, continue; end % Skip if this sex has no animals in FD
+            
+            % Get data for this sex subset
+            data_FD_sex = dataTable(ismember(dataTable.Animal, animals_to_test) & dataTable.Condition == 'FullDark', :);
+            unique_days_FD = unique(data_FD_sex.DayOfCondition);
+            
+            if isempty(unique_days_FD), continue; end
+
+            % --- 1. STATS CALCULATION (Per Animal) ---
+            % We create a matrix to store daily peaks: Rows=Days, Cols=Animals
+            animal_daily_peaks = NaN(length(unique_days_FD), N_sex);
+            
+            for i_animal = 1:N_sex
+                animal_id = animals_to_test(i_animal);
+                data_this_animal = data_FD_sex(data_FD_sex.Animal == animal_id, :);
+                
+                for i_day = 1:length(unique_days_FD)
+                    day_val = unique_days_FD(i_day);
+                    data_this_day_animal = data_this_animal(data_this_animal.DayOfCondition == day_val, :);
+                    
+                    if isempty(data_this_day_animal), continue; end
+                    
+                    hourly_mean = groupsummary(data_this_day_animal, ztHourVar, 'mean', current_metric_var);
+                    
+                    if ~isempty(hourly_mean)
+                        [~, maxIdx] = max(hourly_mean.(['mean_', current_metric_var]));
+                        if ~isempty(maxIdx)
+                            animal_daily_peaks(i_day, i_animal) = hourly_mean.(ztHourVar)(maxIdx(1));
+                        end
+                    end
+                end
+            end
+
+            % --- 2. PLOTTING CALCULATION (Pooled by Sex) ---
+            % This calculates the daily pooled peak just for this sex
+            daily_peak_ZT_pooled = NaN(length(unique_days_FD),1);
+            for i_day = 1:length(unique_days_FD)
+                day_val = unique_days_FD(i_day);
+                data_this_day_pooled = data_FD_sex(data_FD_sex.DayOfCondition == day_val, :);
+                if isempty(data_this_day_pooled), continue; end
+                hourly_mean_pooled = groupsummary(data_this_day_pooled, ztHourVar, 'mean', current_metric_var);
+                if ~isempty(hourly_mean_pooled)
+                    [~,maxIdx] = max(hourly_mean_pooled.(['mean_',current_metric_var])); 
+                    if ~isempty(maxIdx)
+                        daily_peak_ZT_pooled(i_day) = hourly_mean_pooled.(ztHourVar)(maxIdx(1)); 
+                    end
+                end
+            end
+            
+            % --- Plot this sex's line ---
+            plot(ax5F, unique_days_FD(~isnan(daily_peak_ZT_pooled)), daily_peak_ZT_pooled(~isnan(daily_peak_ZT_pooled)), 'o-', 'Color', sex_color, 'LineWidth', 1.5, 'DisplayName', sex_str);
+
+            % --- 3. RUN STATS for this sex ---
+            fprintf('--- Stats for %s ---\n', sex_str);
+            
+            % Define day indices
+            min_day_idx = 1;
+            max_day_idx = length(unique_days_FD);
+        
+            if max_day_idx >= 7 && N_sex >= 5 % Use N>=5 rule
+                first_week_day_indices = min_day_idx : min(min_day_idx + 6, max_day_idx);
+                last_week_day_indices = max(max_day_idx - 6, min_day_idx) : max_day_idx;
+
+                first_week_all_peaks = animal_daily_peaks(first_week_day_indices, :);
+                last_week_all_peaks = animal_daily_peaks(last_week_day_indices, :);
+
+                first_week_animal_means = mean(first_week_all_peaks, 1, 'omitnan');
+                last_week_animal_means = mean(last_week_all_peaks, 1, 'omitnan');
+                
+                [h, p_peak, ci, stats_peak] = ttest(first_week_animal_means, last_week_animal_means);
+                
+                fprintf('Comparing Mean Peak ZT per animal (%s):\n', sex_str);
+                fprintf('  - First Week Mean Peak ZT (N=%d animals): %.2f\n', sum(~isnan(first_week_animal_means)), mean(first_week_animal_means, 'omitnan'));
+                fprintf('  - Last Week Mean Peak ZT  (N=%d animals): %.2f\n', sum(~isnan(last_week_animal_means)), mean(last_week_animal_means, 'omitnan'));
+                fprintf('Paired T-Test Result:\n');
+                fprintf('  - T-statistic: %.3f\n', stats_peak.tstat);
+                fprintf('  - P-value: %.4f\n', p_peak);
+                if h
+                    disp('  - The difference is statistically significant (p < 0.05).');
+                else
+                    disp('  - The difference is NOT statistically significant (p >= 0.05).');
+                end
+                
+            elseif N_sex < 5
+                fprintf('SKIPPED Paired T-Test for %s (N=%d is too low for a valid test).\n', sex_str, N_sex);
+            else
+                disp('  - Not enough data (< 7 days) in FullDark to perform weekly comparison.');
+            end
+        end % --- End of sex loop ---
+
+        % --- Final Formatting ---
+        title(ax5F, sprintf('Fig 5F: Peak Activity ZT in FullDark by Sex (%s)', current_metric_suffix));
+        xlabel(ax5F, 'Day in FullDark'); ylabel(ax5F, 'ZT of Peak Activity');
+        yticks(ax5F, 0:6:23); ylim(ax5F, [-1 24]); grid(ax5F, 'on');
+        legend(ax5F, 'Location', 'northwest');
+        set(ax5F, 'Position', [0.13 0.11 0.775 0.815]);
+        
+        fig_filename = fullfile(savePath_Fig5, sprintf('Figure5F_PeakShift_bySex_%s.png', current_metric_suffix));
+        exportgraphics(hFig5F_peak, fig_filename); 
+        disp(['Saved: ', fig_filename]); 
+        close(hFig5F_peak);
+        
+    catch ME_5F
+        warning('ErrGen:Fig5F','Error Fig 5F (%s): %s', current_metric_suffix, ME_5F.message); 
     end
 end
 disp('=====================================================');
