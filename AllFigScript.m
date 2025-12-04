@@ -397,7 +397,6 @@ for met_idx = 1:length(activity_metrics_to_plot)
     %% FIG 4A: 48h Diurnality Line Plots by Condition
     disp('--- Starting Figure 4A: 48h Profiles ---');
     try
-        % --- MODIFICATION START: Replaced subplot with tiledlayout ---
         lightingConditions_Fig4A = {'300Lux', '1000Lux', 'FullDark', '300LuxEnd'};
         hFig4A_Subplots = figure('Name', sprintf('Fig 4A: 48h Profiles by Condition (%s)', current_metric_suffix), 'Visible', 'off', 'Color', 'w', 'Units', 'inches', 'Position', [1 1 7 9]);
         
@@ -441,7 +440,6 @@ for met_idx = 1:length(activity_metrics_to_plot)
         xlabel(t, 'ZT Hour (Double Plotted)');
         ylabel(t, current_metric_ylabel);
         title(t, sprintf('48h Activity Profiles by Condition (%s)', current_metric_suffix));
-        % --- MODIFICATION END ---
         
         fig_filename = fullfile(savePath_Fig4, sprintf('Figure4A_SubplotProfiles_SameY_%s.png', current_metric_suffix));
         exportgraphics(hFig4A_Subplots, fig_filename); disp(['Saved: ', fig_filename]); close(hFig4A_Subplots);
@@ -540,7 +538,7 @@ for met_idx = 1:length(activity_metrics_to_plot)
             end
         end
 
-        % --- NEW STATS: Cross-Condition (300 vs 1000) ---
+        % --- Cross-Condition (300 vs 1000) ---
         fprintf('\n--- STATS: Fig 4C Cross-Condition (Effect of Light Intensity) ---\n');
         
         % Align 300 and 1000 data (N=12)
@@ -561,8 +559,6 @@ for met_idx = 1:length(activity_metrics_to_plot)
 
         % --- Original Stats (On vs Off) ---
         disp('--- STATS: Fig 4C Diurnality (On vs Off) ---');
-        % (Re-implementing minimal necessary checks for plotting)
-        % ... [This part can be standard, I'm focusing on the new requests] ...
         
         % --- Plotting Significance Bars ---
         y_lims = get(ax4C, 'YLim'); y_range = diff(y_lims);
@@ -635,7 +631,6 @@ for met_idx = 1:length(activity_metrics_to_plot)
             last_week_means = calc_circ_mean(last_week_data);
             
             % --- CALCULATE SHIFT (Shortest Distance on Circle) ---
-            % We cannot just subtract. We must handle the wrap-around (e.g., 1 - 23 = +2, not -22)
             raw_diff = last_week_means - first_week_means;
             circular_diff = mod(raw_diff + 12, 24) - 12; % Wraps result to [-12, +12] range
             
@@ -653,8 +648,6 @@ for met_idx = 1:length(activity_metrics_to_plot)
             fprintf('One-Sample T-Test on Phase Shift (diff vs 0): t=%.3f, p=%.4f\n', stats_peak.tstat, p_peak);
         end
         
-        % Plotting (Standard Pooled) - NOTE: Plotting standard means on linear graph will still look jumpy
-        % Just for visualization, we keep the standard plot, but the stats are now fixed.
         daily_peak_ZT_pooled = NaN(length(unique_days_FD),1);
         for i_day = 1:length(unique_days_FD)
             day_val = unique_days_FD(i_day);
@@ -735,7 +728,7 @@ for met_idx = 1:length(activity_metrics_to_plot)
         % 4. Create Base Gray Violin Plot
         violinplot(plotData_4E, groupData_4E, 'Parent', ax4E, 'GroupOrder', groupOrder_4E, 'ViolinColor', grayColor, 'ShowData', false);
         
-        % 5. Reference line at 0% (crucial for this plot type)
+        % 5. Reference line at 0%
         yline(ax4E, 0, 'k--', 'LineWidth', 1.2, 'HandleVisibility', 'off');
         
         % 6. Overlay Individual Data Points (Males vs Females)
@@ -760,7 +753,7 @@ for met_idx = 1:length(activity_metrics_to_plot)
             disp('--- STATS: Figure 4E (Corrected: Paired t-tests & Bonferroni) ---');
             hold(ax4E, 'on');
 
-            % --- 1. Create a single WIDE table to align all animals ---
+            % --- 1. Create a single wide table to align all animals ---
             % Get data + Animal IDs from the map.
             temp_table_300 = grouped_pct_data('300Lux');
             table_300 = temp_table_300(:, {'Animal', 'PctChange'});
@@ -1002,7 +995,6 @@ for met_idx = 1:length(activity_metrics_to_plot)
         hFig5B_current = figure('Name', sprintf('Fig 5B: Diurnality by Sex and Cond (%s)', current_metric_suffix), 'Visible', 'off', 'Color', 'w', 'Units', 'inches', 'Position', [1 1 12 7]);
         ax5B = axes('Parent', hFig5B_current); hold(ax5B, 'on');
         
-        % --- (Data preparation and plotting code is unchanged) ---
         plotTable_5B = table();
         conditions_5B = {'300Lux', '1000Lux', 'FullDark'};
         lightPeriods_5B = {'On', 'Off'};
@@ -1049,7 +1041,7 @@ for met_idx = 1:length(activity_metrics_to_plot)
         xtickangle(ax5B, 45);
         set(ax5B, 'Position', [0.1 0.25 0.88 0.65]);
         
-        % --- (Original Statistics for 5B - Corrected) ---
+        % --- Statistics for 5B ---
         fprintf('\n--- STATS: Figure 5B (Paired On vs. Off by Sex/Condition) for %s ---\n', current_metric_suffix);
         tests_5B = { ...
             {'300Lux_On', '300Lux_Off', maleAnimals, 'Male 300Lux (On vs Off)'}, ...
@@ -1102,7 +1094,7 @@ for met_idx = 1:length(activity_metrics_to_plot)
             end
         end
         
-        % --- START: NEW STATS BLOCK FOR FIG 5B (Cross-Condition) ---
+        % --- STATS BLOCK FOR FIG 5B ---
         if strcmp(current_metric_var, "NormalizedActivity")
             try
                 disp('--- STATS: Figure 5B (Cross-Condition Paired T-Tests) for NormalizedActivity ---');
@@ -1150,7 +1142,6 @@ for met_idx = 1:length(activity_metrics_to_plot)
                 warning('ErrGen:Fig5BStatsExtra', 'Could not plot extra stats for Fig 5B: %s', ME_5B_extra.message);
             end
         end
-        % --- END: NEW STATS BLOCK ---
         
         fig_filename = fullfile(savePath_Fig5, sprintf('Figure5B_Violins_12group_%s.png', current_metric_suffix));
         exportgraphics(hFig5B_current, fig_filename); 
@@ -1256,7 +1247,6 @@ for met_idx = 1:length(activity_metrics_to_plot)
         % 5. Reference line at 0%
         yline(ax5E, 0, 'k--');
         
-        % --- START: MODIFIED STATS BLOCK FOR FIG 5E ---
         try
             disp('--- STATS: Figure 5E (M vs F Pct Change) ---');
             hold(ax5E, 'on');
@@ -1303,7 +1293,6 @@ for met_idx = 1:length(activity_metrics_to_plot)
                 end
             end
             
-            % --- START: NEW STATS (Cross-Condition) for PixelDiff ---
             if strcmp(current_metric_var, "SelectedPixelDifference")
                 disp('--- STATS: Figure 5E (Cross-Condition Paired T-Tests) for PixelDiff ---');
                 
@@ -1346,12 +1335,10 @@ for met_idx = 1:length(activity_metrics_to_plot)
                     end
                 end
             end
-            % --- END: NEW STATS ---
             
         catch ME_Stats_5E
             warning('ErrGen:Fig5EStats', 'Could not plot significance for Fig 5E: %s', ME_Stats_5E.message);
         end
-        % --- END: MODIFIED STATS BLOCK ---
 
         % 8. Formatting and Saving
         title(ax5E, sprintf('Fig 5E: ON:OFF %% Change by Sex and Condition (%s)', current_metric_suffix));
@@ -1412,7 +1399,7 @@ for met_idx = 1:length(activity_metrics_to_plot)
             end
 
             % 2. Plot Pooled Line (Visual only)
-            % We calculate the CIRCULAR mean for the visual plot line too, to avoid jumps
+            % Calculate the CIRCULAR mean for the visual plot line too, to avoid jumps
             calc_circ_mean_vec = @(x) mod(atan2(mean(sin(x*2*pi/24),1,'omitnan'), mean(cos(x*2*pi/24),1,'omitnan')) * 24/(2*pi), 24);
             daily_pool = calc_circ_mean_vec(animal_daily_peaks')'; % Transpose to mean across animals (columns)
             
