@@ -191,24 +191,85 @@ for met_idx = 1:length(activity_metrics_to_plot)
         exportgraphics(hFig3B_current, fig_filename); disp(['Saved: ', fig_filename]); close(hFig3B_current);
     catch ME_3B, warning('ErrGen:Fig3B','Error Fig 3B (%s): %s',current_metric_suffix, ME_3B.message); end
     
-    %% FIG 3C: Pooled 24-Hour Activity Profile
+%% FIG 3C: Pooled 24-Hour Activity Profile (WITH HOURLY STATS)
     disp('--- Starting Figure 3C: Pooled 24-Hour Profile ---');
     try
         hFig3C_current = figure('Name', sprintf('Fig 3C: 24h Profile (%s)', current_metric_suffix), 'Visible', 'off', 'Color', 'w');
         ax3C = axes('Parent', hFig3C_current);
+        
+        % Calculate Plotting Data (Mean +/- SEM)
         hourlyStats_3C = groupsummary(initialBaselineData, ztHourVar, {'mean','std','nnz'}, current_metric_var);
         hourlyStats_3C = sortrows(hourlyStats_3C, ztHourVar);
         meanAct_3C = hourlyStats_3C.(['mean_',current_metric_var]);
         semAct_3C  = hourlyStats_3C.(['std_',current_metric_var]) ./ sqrt(hourlyStats_3C.(['nnz_',current_metric_var]));
-        errorbar(ax3C,hourlyStats_3C.(ztHourVar),meanAct_3C,semAct_3C,'o-','LineWidth',1.5,'MarkerSize',4,'CapSize',3,'Color',[0.2 0.2 0.2]);
+        
+        % Plot the Profile
+        errorbar(ax3C, hourlyStats_3C.(ztHourVar), meanAct_3C, semAct_3C, 'o-', 'LineWidth', 1.5, 'MarkerSize', 4, 'CapSize', 3, 'Color', [0.2 0.2 0.2]);
         hold(ax3C,'on');
-        yl3C=ylim(ax3C); patch(ax3C,[ztLightsOffStart-0.5, ztLightsOffEnd+0.5, ztLightsOffEnd+0.5, ztLightsOffStart-0.5], [yl3C(1) yl3C(1) yl3C(2) yl3C(2)], [0.85 0.85 0.85],'FaceAlpha',0.25,'EdgeColor','none');
+        
+        % Stats: Hour X vs. Average of Other 23 Hours
+        disp('--- STATS: Fig 3C (Hour vs Daily Average) ---');
+        unique_animals = unique(initialBaselineData.Animal);
+        p_values_3C = ones(24, 1);
+        
+        % Calculate animal-level means for the t-test to avoid pseudoreplication
+        % Create a matrix: Rows = Animals, Cols = Hours (0-23)
+        animal_hourly_matrix = NaN(length(unique_animals), 24);
+        
+        for i = 1:length(unique_animals)
+            an_data = initialBaselineData(initialBaselineData.Animal == unique_animals(i), :);
+            an_hourly = groupsummary(an_data, ztHourVar, 'mean', current_metric_var);
+            % Map to 0-23 index
+            [found, idx] = ismember((0:23)', an_hourly.(ztHourVar));
+            animal_hourly_matrix(i, found) = an_hourly.(['mean_', current_metric_var])(idx(found));
+        end
+        
+        % Bonferroni Correction for 24 tests
+        alpha_3C = 0.05 / 24; 
+        
+        for h = 1:24 % Loop 1 to 24 (corresponding to ZT 0 to 23)
+            col_target = animal_hourly_matrix(:, h);
+            col_others = animal_hourly_matrix; 
+            col_others(:, h) = []; % Remove target column
+            mean_others = mean(col_others, 2, 'omitnan'); % Average of the other 23 hours per animal
+            
+            % Paired t-test: Is this hour significantly different from the animal's background average?
+            if all(~isnan(col_target) & ~isnan(mean_others))
+                [~, p] = ttest(col_target, mean_others);
+                p_values_3C(h) = p;
+            end
+        end
+        
+        % 4. Plot Asterisks
+        % Find significant indices
+        sig_idx = find(p_values_3C < alpha_3C);
+        
+        if ~isempty(sig_idx)
+            % Determine Y-position for asterisks (slightly above the error bar)
+            y_points = meanAct_3C(sig_idx) + semAct_3C(sig_idx);
+            % Add a buffer so it doesn't touch the bar (5% of range)
+            y_range = max(meanAct_3C) - min(meanAct_3C);
+            y_asterisks = y_points + (y_range * 0.05);
+            
+            plot(ax3C, sig_idx-1, y_asterisks, '*', 'Color', 'k', 'MarkerSize', 6);
+            fprintf('Significant Hours (p < %.4f): ZT %s\n', alpha_3C, num2str(sig_idx' - 1));
+        end
+
+        % 5. Standard Formatting
+        yl3C=ylim(ax3C); 
+        % Adjust Y-lim if asterisks are cut off
+        if ~isempty(sig_idx)
+            ylim(ax3C, [yl3C(1), max(yl3C(2), max(y_asterisks) + y_range*0.05)]);
+            yl3C=ylim(ax3C);
+        end
+        
+        patch(ax3C,[ztLightsOffStart-0.5, ztLightsOffEnd+0.5, ztLightsOffEnd+0.5, ztLightsOffStart-0.5], [yl3C(1) yl3C(1) yl3C(2) yl3C(2)], [0.85 0.85 0.85],'FaceAlpha',0.25,'EdgeColor','none');
         if strcmp(current_metric_var, normalizedActivityVar), plot(ax3C,xlim(ax3C),[0 0],'k--'); end
         hold(ax3C,'off');
         xlabel(ax3C,'ZT Hour'); ylabel(ax3C,['Mean ',current_metric_ylabel]);
         title(ax3C,sprintf('Pooled 24h Activity Profile (%s - Baseline)',current_metric_suffix));
         xticks(ax3C,0:3:23); xlim(ax3C,[-0.5,23.5]); grid(ax3C,'on');
-        set(ax3C, 'Position', [0.13 0.11 0.775 0.815]); % Add margins for whitespace
+        set(ax3C, 'Position', [0.13 0.11 0.775 0.815]); 
         fig_filename = fullfile(savePath_Fig3, sprintf('Figure3C_Profile_Baseline_%s.png', current_metric_suffix));
         exportgraphics(hFig3C_current, fig_filename); disp(['Saved: ', fig_filename]); close(hFig3C_current);
     catch ME_3C, warning('ErrGen:Fig3C','Error Fig 3C (%s): %s',current_metric_suffix, ME_3C.message); end
@@ -248,8 +309,8 @@ for met_idx = 1:length(activity_metrics_to_plot)
         end
         
         num_tests = 3;
-        corrected_alpha = 0.05 / num_tests;
-        fprintf('Applying Bonferroni correction for %d tests. New alpha = %.4f\n', num_tests, corrected_alpha);
+        corrected_alpha = 0.05; % not using Bonferroni
+        fprintf('Using standard alpha (0.05)');
         
         y_max = max(plotTable_3D.MeanActivity, [], 'omitnan'); if isempty(y_max) || isnan(y_max), y_max=1; end
         current_ylim = ylim(ax3D);
@@ -394,7 +455,7 @@ for met_idx = 1:length(activity_metrics_to_plot)
     current_metric_ylabel = metric_ylabels{met_idx};
     fprintf('\n--- Generating Figure 4 components for metric: %s ---\n', current_metric_var);
     
-    %% FIG 4A: 48h Diurnality Line Plots by Condition
+    %% FIG 4A: 48h Diurnality Line Plots by Condition (with Day/Night avg lines)
     disp('--- Starting Figure 4A: 48h Profiles ---');
     try
         lightingConditions_Fig4A = {'300Lux', '1000Lux', 'FullDark', '300LuxEnd'};
@@ -405,30 +466,56 @@ for met_idx = 1:length(activity_metrics_to_plot)
         
         global_min_y = Inf; global_max_y = -Inf;
         all_profiles_4A = cell(length(lightingConditions_Fig4A), 1);
+        % New storage for day/night averages per condition
+        mean_levels_day = cell(length(lightingConditions_Fig4A), 1);
+        mean_levels_night = cell(length(lightingConditions_Fig4A), 1);
+
+        % --- Pre-computation Loop ---
         for i_cond = 1:length(lightingConditions_Fig4A)
             data_this_cond = dataTable(ismember(dataTable.Animal, fourCondAnimals) & dataTable.Condition == lightingConditions_Fig4A{i_cond}, :);
             if isempty(data_this_cond), continue; end
+            
+            % 1. Calculate Hourly Profile
             hourly_mean = groupsummary(data_this_cond, ztHourVar, 'mean', current_metric_var);
             mean_profile_24h = NaN(hoursPerDay, 1);
             [lia, locb] = ismember((0:23)', hourly_mean.(ztHourVar));
             mean_profile_24h(lia) = hourly_mean.(['mean_', current_metric_var])(locb(lia));
             all_profiles_4A{i_cond} = mean_profile_24h;
+            
+            % 2. Calculate Day (ZT 0-11) and Night (ZT 12-23) Grand Averages for this condition
+            day_idx = data_this_cond.(ztHourVar) >= 0 & data_this_cond.(ztHourVar) <= 11;
+            night_idx = data_this_cond.(ztHourVar) >= 12 & data_this_cond.(ztHourVar) <= 23;
+            mean_levels_day{i_cond} = mean(data_this_cond.(current_metric_var)(day_idx), 'omitnan');
+            mean_levels_night{i_cond} = mean(data_this_cond.(current_metric_var)(night_idx), 'omitnan');
+
+            % 3. Update global limits for common Y-axis
             global_min_y = min(global_min_y, min(mean_profile_24h,[],'omitnan'));
             global_max_y = max(global_max_y, max(mean_profile_24h,[],'omitnan'));
         end
         
+        % --- Plotting Loop ---
         for i_cond_4A = 1:length(lightingConditions_Fig4A)
-            % Use nexttile to create the next axes
             ax4A = nexttile; 
             hold(ax4A, 'on');
+            
+            % Plot the 48h Profile
             mean_profile_48h = [all_profiles_4A{i_cond_4A}; all_profiles_4A{i_cond_4A}];
             plot(ax4A, (0:47)', mean_profile_48h, 'k-', 'LineWidth', 1.5);
             
+            % Plot the Day/Night Average horizontal dashed lines
+            if isfinite(mean_levels_day{i_cond_4A})
+                 yline(ax4A, mean_levels_day{i_cond_4A}, 'r--', 'LineWidth', 1, 'HandleVisibility', 'off');
+            end
+            if isfinite(mean_levels_night{i_cond_4A})
+                 yline(ax4A, mean_levels_night{i_cond_4A}, 'r--', 'LineWidth', 1, 'HandleVisibility', 'off');
+            end
+
             % Set a globally consistent Y-limit
             if isfinite(global_min_y) && isfinite(global_max_y)
                 ylim(ax4A, [global_min_y - 0.1*abs(global_min_y), global_max_y + 0.1*abs(global_max_y)]);
             end
             
+            % Add Shading and formatting
             current_ylim = ylim(ax4A);
             patch(ax4A, [ztLightsOffStart, ztLightsOffEnd+1, ztLightsOffEnd+1, ztLightsOffStart], [current_ylim(1) current_ylim(1) current_ylim(2) current_ylim(2)], [0.9 0.9 0.9], 'FaceAlpha', 0.3, 'EdgeColor', 'none');
             patch(ax4A, [ztLightsOffStart+24, ztLightsOffEnd+1+24, ztLightsOffEnd+1+24, ztLightsOffStart+24], [current_ylim(1) current_ylim(1) current_ylim(2) current_ylim(2)], [0.9 0.9 0.9], 'FaceAlpha', 0.3, 'EdgeColor', 'none');
@@ -445,7 +532,7 @@ for met_idx = 1:length(activity_metrics_to_plot)
         exportgraphics(hFig4A_Subplots, fig_filename); disp(['Saved: ', fig_filename]); close(hFig4A_Subplots);
     catch ME_4A, warning('ErrGen:Fig4A','Error Fig 4A (%s): %s', current_metric_suffix, ME_4A.message); end
     
-    %% FIG 4B: Overlay Activity Profiles with Difference Line (WITH STATS)
+    %% FIG 4B: Overlay Activity Profiles with Difference Line (WITH STATS & ASTERISKS)
     disp('--- Starting Figure 4B: Overlay Profiles ---');
     fprintf('\n--- STATS: Figure 4B (300Lux vs 1000Lux Hourly) for %s ---\n', current_metric_var);
     try
@@ -454,6 +541,8 @@ for met_idx = 1:length(activity_metrics_to_plot)
         conditions_Fig4B = {'300Lux', '1000Lux', 'FullDark'};
         lineColors = {[0 0.4470 0.7410], [0.8500 0.3250 0.0980], [0.4660 0.6740 0.1880]};
         mean_profiles = table();
+        
+        % 1. Calculate and Plot Lines
         for i_cond = 1:length(conditions_Fig4B)
             animals_for_cond = allAnimals; if strcmp(conditions_Fig4B{i_cond},'FullDark'), animals_for_cond=fourCondAnimals; end
             data_this_cond = dataTable(ismember(dataTable.Animal, animals_for_cond) & dataTable.Condition == conditions_Fig4B{i_cond}, :);
@@ -467,22 +556,67 @@ for met_idx = 1:length(activity_metrics_to_plot)
             plot(ax4B, (0:23)', mean_prof, 'Color', lineColors{i_cond}, 'LineWidth', 2, 'DisplayName', conditions_Fig4B{i_cond});
             fill(ax4B, [(0:23)'; flipud((0:23)')], [mean_prof-sem_prof; flipud(mean_prof+sem_prof)], lineColors{i_cond}, 'FaceAlpha', 0.15, 'EdgeColor', 'none', 'HandleVisibility', 'off');
         end
+        
+        % 2. Plot Difference Line
         diff_profile = mean_profiles.('1000Lux') - mean_profiles.('300Lux');
         plot(ax4B, (0:23)', diff_profile, 'k:', 'LineWidth', 1.5, 'DisplayName', '1000L-300L Diff');
+        
+        % 3. Shading
         current_ylim = ylim(ax4B);
         patch(ax4B,[ztLightsOffStart,ztLightsOffEnd+1,ztLightsOffEnd+1,ztLightsOffStart], [current_ylim(1) current_ylim(1) current_ylim(2) current_ylim(2)], [0.9 0.9 0.9],'FaceAlpha',0.2,'EdgeColor','none', 'HandleVisibility', 'off');
+        
+        % 4. STATS: Hourly T-Test (300 vs 1000)
         p_values = ones(24, 1);
         for zt = 0:23
             d300 = dataTable(dataTable.Condition=='300Lux' & dataTable.ZT_Time==zt, :).(current_metric_var);
             d1000 = dataTable(dataTable.Condition=='1000Lux' & dataTable.ZT_Time==zt, :).(current_metric_var);
-            if ~isempty(d300) && ~isempty(d1000), [~, p] = ttest2(d300, d1000); p_values(zt+1) = p; end
+            if ~isempty(d300) && ~isempty(d1000)
+                [~, p] = ttest2(d300, d1000); % Independent t-test at each hour
+                p_values(zt+1) = p; 
+            end
         end
-        significant_hours = find((p_values * 24) < 0.05);
-        fprintf('Significant differences (p < 0.05, Bonferroni) at ZT: %s\n', num2str(significant_hours' - 1));
+        
+        % 5. PLOT ASTERISKS
+        alpha_4B = 0.05 / 24; % Bonferroni Correction
+        sig_indices = find(p_values < alpha_4B);
+        
+        if ~isempty(sig_indices)
+            % Convert indices (1-24) to ZT hours (0-23)
+            sig_zt = sig_indices - 1;
+            
+            % Calculate Y-positions for asterisks
+            % We want them slightly above the higher of the two lines at that hour
+            y_asterisks = NaN(size(sig_zt));
+            prof_300 = mean_profiles.('300Lux');
+            prof_1000 = mean_profiles.('1000Lux');
+            
+            for k = 1:length(sig_zt)
+                idx = sig_indices(k);
+                % Find max value at this hour between the two conditions
+                max_val = max(prof_300(idx), prof_1000(idx));
+                % Add 5% buffer relative to plot range
+                y_buffer = (current_ylim(2) - current_ylim(1)) * 0.05;
+                y_asterisks(k) = max_val + y_buffer;
+            end
+            
+            % Plot the asterisks
+            plot(ax4B, sig_zt, y_asterisks, '*', 'Color', 'k', 'MarkerSize', 6, 'HandleVisibility', 'off');
+            
+            % Adjust Y-limits if asterisks go off screen
+            max_ast_y = max(y_asterisks);
+            if max_ast_y > current_ylim(2)
+                ylim(ax4B, [current_ylim(1), max_ast_y + (current_ylim(2)-current_ylim(1))*0.05]);
+            end
+            
+            fprintf('Significant differences (p < %.4f, Bonferroni) at ZT: %s\n', alpha_4B, num2str(sig_zt'));
+        else
+            fprintf('No significant hourly differences found after correction.\n');
+        end
+        
         title(ax4B, sprintf('Fig 4B: Activity Profiles & Difference (%s)', current_metric_suffix));
         xlabel(ax4B, 'ZT Hour'); ylabel(ax4B, current_metric_ylabel);
         xticks(ax4B, 0:6:23); xlim(ax4B, [-0.5 23.5]); grid(ax4B, 'on'); legend(ax4B, 'Location', 'northeast');
-        set(ax4B, 'Position', [0.13 0.11 0.775 0.815]); % Add margins for whitespace
+        set(ax4B, 'Position', [0.13 0.11 0.775 0.815]);
         fig_filename = fullfile(savePath_Fig4, sprintf('Figure4B_OverlayAndDiff_%s.png', current_metric_suffix));
         exportgraphics(hFig4B_OverlayDiff, fig_filename); disp(['Saved: ', fig_filename]); close(hFig4B_OverlayDiff);
     catch ME_4B, warning('ErrGen:Fig4B','Error Fig 4B (%s): %s', current_metric_suffix, ME_4B.message); end
@@ -825,8 +959,9 @@ for met_idx = 1:length(activity_metrics_to_plot)
                         
             % 1. 1000Lux vs 300Lux
             p = p_values('1000Lux_vs_300Lux');
-            if p < 0.001, str_sig = '***'; elseif p < 0.01, str_sig = '**'; elseif p < 0.05, str_sig = '*'; else, str_sig = 'n.s.'; end
-            if ~strcmp(str_sig, 'n.s.')
+            % Standard alpha 0.05 for this specific hypothesis
+            if p < 0.05 
+                if p < 0.001, str_sig = '***'; elseif p < 0.01, str_sig = '**'; else, str_sig = '*'; end
                 plot(ax4E, [x_control, x_1000], [y_level_1, y_level_1], 'k-', 'LineWidth', 1.2);
                 text(ax4E, mean([x_control, x_1000]), y_text_1, str_sig, 'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom', 'FontSize', 10, 'FontWeight', 'bold');
             end
@@ -1317,8 +1452,9 @@ for met_idx = 1:length(activity_metrics_to_plot)
                 x_f_300 = find(strcmp(groupOrder_5E, '300Lux-Female'));
                 x_f_1000 = find(strcmp(groupOrder_5E, '1000Lux-Female'));
                 if ~isempty(x_f_300) && ~isempty(x_f_1000)
-                    if p_f < 0.001, str = '***'; elseif p_f < 0.01, str = '**'; elseif p_f < 0.05, str = '*'; else, str = 'n.s.'; end
-                    if ~strcmp(str, 'n.s.')
+                    % Planned Comparison: Alpha = 0.05
+                    if p_f < 0.05 
+                        if p_f < 0.001, str = '***'; elseif p_f < 0.01, str = '**'; else, str = '*'; end
                         plot(ax5E, [x_f_300, x_f_1000], [y_bar_level_2, y_bar_level_2], 'k-', 'LineWidth', 1.2);
                         text(ax5E, mean([x_f_300, x_f_1000]), y_text_level_2, str, 'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom', 'FontSize', 10, 'FontWeight', 'bold');
                     end
@@ -1328,8 +1464,9 @@ for met_idx = 1:length(activity_metrics_to_plot)
                 x_m_300 = find(strcmp(groupOrder_5E, '300Lux-Male'));
                 x_m_1000 = find(strcmp(groupOrder_5E, '1000Lux-Male'));
                 if ~isempty(x_m_300) && ~isempty(x_m_1000)
-                    if p_m < 0.001, str = '***'; elseif p_m < 0.01, str = '**'; elseif p_m < 0.05, str = '*'; else, str = 'n.s.'; end
-                    if ~strcmp(str, 'n.s.')
+                    % Planned Comparison: Alpha = 0.05
+                    if p_m < 0.05 
+                        if p_m < 0.001, str = '***'; elseif p_m < 0.01, str = '**'; else, str = '*'; end
                         plot(ax5E, [x_m_300, x_m_1000], [y_bar_level_2, y_bar_level_2], 'k-', 'LineWidth', 1.2);
                         text(ax5E, mean([x_m_300, x_m_1000]), y_text_level_2, str, 'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom', 'FontSize', 10, 'FontWeight', 'bold');
                     end
