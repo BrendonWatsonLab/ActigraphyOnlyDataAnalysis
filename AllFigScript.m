@@ -1058,6 +1058,132 @@ for met_idx = 1:length(activity_metrics_to_plot)
     catch ME_Desc
         warning('ErrGen:DescStats', 'Error calculating descriptive stats: %s', ME_Desc.message); 
     end
+
+    %% FIG 4F: FullDark Transition Analysis (Violins)
+    disp('--- Starting Figure 4F: FullDark Transition Analysis ---');
+    try
+        hFig4F_current = figure('Name', sprintf('Fig 4F: FullDark Transitions (%s)', current_metric_suffix), 'Visible', 'off', 'Color', 'w');
+        ax4F = axes('Parent', hFig4F_current); hold(ax4F, 'on');
+        
+        % 1. Define Windows
+        % Order: 1=Full, 2=Dark, 3=BD(Dusk), 4=DB(Dawn)
+        window_labels_4F = {'Full Day', 'Dark (12-23)', 'Bright-Dark (10-14)', 'Dark-Bright (22-2)'};
+        
+        % 2. Extract Data (N=8 FullDark Animals)
+        data_FD_4F = dataTable(ismember(dataTable.Animal, fourCondAnimals) & dataTable.Condition == 'FullDark', :);
+        animal_means_4F = [];
+        
+        unique_animals_FD = unique(data_FD_4F.Animal);
+        for i_an = 1:length(unique_animals_FD)
+            current_an = unique_animals_FD(i_an);
+            an_data = data_FD_4F(data_FD_4F.Animal == current_an, :);
+            
+            if ismember(current_an, maleAnimals), sex_val = 'Male'; else, sex_val = 'Female'; end
+            
+            % Calculate Means
+            mean_full = mean(an_data.(current_metric_var), 'omitnan');
+            
+            idx_dark = an_data.(ztHourVar) >= 12 & an_data.(ztHourVar) <= 23;
+            mean_dark = mean(an_data.(current_metric_var)(idx_dark), 'omitnan');
+            
+            idx_bd = an_data.(ztHourVar) >= 10 & an_data.(ztHourVar) <= 14;
+            mean_bd = mean(an_data.(current_metric_var)(idx_bd), 'omitnan');
+            
+            idx_db = an_data.(ztHourVar) >= 22 | an_data.(ztHourVar) <= 2;
+            mean_db = mean(an_data.(current_metric_var)(idx_db), 'omitnan');
+            
+            % Store in exact order
+            animal_means_4F = [animal_means_4F; {current_an, window_labels_4F{1}, sex_val, mean_full}];
+            animal_means_4F = [animal_means_4F; {current_an, window_labels_4F{2}, sex_val, mean_dark}];
+            animal_means_4F = [animal_means_4F; {current_an, window_labels_4F{3}, sex_val, mean_bd}];
+            animal_means_4F = [animal_means_4F; {current_an, window_labels_4F{4}, sex_val, mean_db}];
+        end
+        
+        % 3. Plotting
+        plotTable_4F = cell2table(animal_means_4F, 'VariableNames', {'Animal', 'Window', 'Sex', 'MeanActivity'});
+        plotTable_4F.Window = categorical(plotTable_4F.Window, window_labels_4F); % Enforces order
+        
+        violinplot(plotTable_4F.MeanActivity, plotTable_4F.Window, 'Parent', ax4F, 'GroupOrder', window_labels_4F, 'ShowData', false, 'ViolinColor', grayColor);
+        
+        jitterAmount = 0.15;
+        for i_win = 1:length(window_labels_4F)
+            win_data = plotTable_4F(plotTable_4F.Window == window_labels_4F{i_win}, :);
+            x_scatter = i_win + (rand(height(win_data), 1) - 0.5) * jitterAmount;
+            male_idx = strcmp(win_data.Sex, 'Male');
+            scatter(ax4F, x_scatter(male_idx), win_data.MeanActivity(male_idx), 40, maleColor, 'filled', 'MarkerFaceAlpha', 0.9);
+            scatter(ax4F, x_scatter(~male_idx), win_data.MeanActivity(~male_idx), 40, femaleColor, 'filled', 'MarkerFaceAlpha', 0.9);
+        end
+        
+        % 4. Stats (Robust Indexing)
+        disp('--- STATS: Figure 4F (FullDark Transitions) ---');
+        % Pivot so columns are the windows
+        piv_4F = unstack(plotTable_4F, 'MeanActivity', 'Window', 'GroupingVariables', 'Animal');
+        
+        % Create valid variable names from our labels to match what unstack did
+        expected_vars = matlab.lang.makeValidName(window_labels_4F);
+        
+        % 1=FullDay, 2=Dark..., 3=BrightDark..., 4=DarkBright...
+        col_full = piv_4F.(expected_vars{1});
+        col_dark = piv_4F.(expected_vars{2});
+        col_bd   = piv_4F.(expected_vars{3});
+        col_db   = piv_4F.(expected_vars{4});
+        
+        % Test 1: Bright-Dark vs Full Day
+        [~, p_bd_vs_full] = ttest(col_bd, col_full);
+        fprintf('Paired T-Test | Bright-Dark vs Full Day: p = %.6f\n', p_bd_vs_full);
+        
+        % Test 2: Bright-Dark vs Dark
+        [~, p_bd_vs_dark] = ttest(col_bd, col_dark);
+        fprintf('Paired T-Test | Bright-Dark vs Dark:     p = %.6f\n', p_bd_vs_dark);
+        
+        % Test 3: Dark-Bright vs Full Day
+        [~, p_db_vs_full] = ttest(col_db, col_full);
+        fprintf('Paired T-Test | Dark-Bright vs Full Day: p = %.6f\n', p_db_vs_full);
+        
+        % Test 4: Dark-Bright vs Dark
+        [~, p_db_vs_dark] = ttest(col_db, col_dark);
+        fprintf('Paired T-Test | Dark-Bright vs Dark:     p = %.6f\n', p_db_vs_dark);
+        
+        % Plot Significance Bars (Planned Comparisons, Alpha = 0.05)
+        y_max = max(plotTable_4F.MeanActivity);
+        y_range = y_max - min(plotTable_4F.MeanActivity);
+        y_pos = y_max + 0.05 * y_range;
+        
+        % X-coordinates from the exact group order
+        x_full = 1; x_dark = 2; x_bd = 3; x_db = 4;
+
+        % Bright-Dark Bars
+        if p_bd_vs_full < 0.05
+            plot_sig_bar(ax4F, [x_full, x_bd], p_bd_vs_full, y_pos, 0.05);
+            y_pos = y_pos + 0.1 * y_range;
+        end
+        if p_bd_vs_dark < 0.05
+            plot_sig_bar(ax4F, [x_dark, x_bd], p_bd_vs_dark, y_pos, 0.05);
+            y_pos = y_pos + 0.1 * y_range;
+        end
+        
+        % Dark-Bright Bars
+        if p_db_vs_full < 0.05
+            plot_sig_bar(ax4F, [x_full, x_db], p_db_vs_full, y_pos, 0.05);
+            y_pos = y_pos + 0.1 * y_range;
+        end
+        if p_db_vs_dark < 0.05
+            plot_sig_bar(ax4F, [x_dark, x_db], p_db_vs_dark, y_pos, 0.05);
+        end
+        
+        % 5. Formatting
+        ylabel(ax4F, ['Mean ', current_metric_ylabel]);
+        title(ax4F, sprintf('FullDark Transitions (%s)', strrep(current_metric_suffix,'_',' ')));
+        xtickangle(ax4F, 45);
+        if strcmp(current_metric_var, normalizedActivityVar), yline(ax4F, 0, 'k:'); end
+        set(ax4F, 'Position', [0.13 0.2 0.775 0.7]);
+        
+        fig_filename = fullfile(savePath_Fig4, sprintf('Figure4F_FullDarkTransitions_%s.png', current_metric_suffix));
+        exportgraphics(hFig4F_current, fig_filename); disp(['Saved: ', fig_filename]); close(hFig4F_current);
+        
+    catch ME_4F
+        warning('ErrGen:Fig4F','Error Fig 4F (%s): %s', current_metric_suffix, ME_4F.message); 
+    end
 end
 
 %% --- 5. GENERATE FIGURE 5 COMPONENTS ---
