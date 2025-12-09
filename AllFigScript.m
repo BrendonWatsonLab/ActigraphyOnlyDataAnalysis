@@ -1092,16 +1092,17 @@ for met_idx = 1:length(activity_metrics_to_plot)
         warning('ErrGen:DescStats', 'Error calculating descriptive stats: %s', ME_Desc.message); 
     end
 
-    %% FIG 4F: FullDark Anticipatory Peak Analysis (Violins) - REVISED
-    % Purpose: Test if the "Anticipatory Peak" (ZT 10-12) exists in FullDark compared to the baseline "Day" (ZT 0-11).
-    disp('--- Starting Figure 4F: FullDark Anticipatory Analysis ---');
+    %% FIG 4F: FullDark Anticipatory Peak Analysis (Dusk & Dawn) - REVISED
+    % Purpose: Test for anticipatory peaks at both Dusk (10-12) and Dawn (21-23) in FullDark.
+    disp('--- Starting Figure 4F: FullDark Anticipatory Analysis (Dusk & Dawn) ---');
     try
         hFig4F_current = figure('Name', sprintf('Fig 4F: FullDark Anticipation (%s)', current_metric_suffix), 'Visible', 'off', 'Color', 'w');
         ax4F = axes('Parent', hFig4F_current); hold(ax4F, 'on');
         
-        window_labels_4F = {'FD Lights-ON Avg (0-11)', 'FD Anticipation (10-12)'};
+        % 1. Define Windows (Day, Dusk, Night, Dawn)
+        window_labels_4F = {'Day Avg (0-11)', 'Dusk Anti (10-12)', 'Night Avg (12-23)', 'Dawn Anti (21-23)'};
         
-        % Extract Data (N=8 FullDark Animals)
+        % 2. Extract Data (N=8 FullDark Animals)
         data_FD_4F = dataTable(ismember(dataTable.Animal, fourCondAnimals) & dataTable.Condition == 'FullDark', :);
         animal_means_4F = [];
         
@@ -1109,56 +1110,86 @@ for met_idx = 1:length(activity_metrics_to_plot)
         for i_an = 1:length(unique_animals_FD)
             current_an = unique_animals_FD(i_an);
             an_data = data_FD_4F(data_FD_4F.Animal == current_an, :);
+            
             if ismember(current_an, maleAnimals), sex_val = 'Male'; else, sex_val = 'Female'; end
             
-            % 1. Lights-ON Avg (ZT 0-11)
-            idx_base = an_data.(ztHourVar) >= 0 & an_data.(ztHourVar) <= 11;
-            mean_base = mean(an_data.(current_metric_var)(idx_base), 'omitnan');
+            % 1. Day Avg (ZT 0-11)
+            idx_day = an_data.(ztHourVar) >= 0 & an_data.(ztHourVar) <= 11;
+            mean_day = mean(an_data.(current_metric_var)(idx_day), 'omitnan');
             
-            % 2. Anticipatory Window (ZT 10-12) -- Note: ZT 12 is usually lights off, so 10,11,12 covers the peak
-            idx_anti = an_data.(ztHourVar) >= 10 & an_data.(ztHourVar) <= 12;
-            mean_anti = mean(an_data.(current_metric_var)(idx_anti), 'omitnan');
+            % 2. Dusk Anticipation (ZT 10-12)
+            idx_dusk = an_data.(ztHourVar) >= 10 & an_data.(ztHourVar) <= 12;
+            mean_dusk = mean(an_data.(current_metric_var)(idx_dusk), 'omitnan');
             
-            animal_means_4F = [animal_means_4F; {current_an, window_labels_4F{1}, sex_val, mean_base}];
-            animal_means_4F = [animal_means_4F; {current_an, window_labels_4F{2}, sex_val, mean_anti}];
+            % 3. Night Avg (ZT 12-23)
+            idx_night = an_data.(ztHourVar) >= 12 & an_data.(ztHourVar) <= 23;
+            mean_night = mean(an_data.(current_metric_var)(idx_night), 'omitnan');
+            
+            % 4. Dawn Anticipation (ZT 21-23)
+            idx_dawn = an_data.(ztHourVar) >= 21 & an_data.(ztHourVar) <= 23;
+            mean_dawn = mean(an_data.(current_metric_var)(idx_dawn), 'omitnan');
+            
+            % Store
+            animal_means_4F = [animal_means_4F; {current_an, window_labels_4F{1}, sex_val, mean_day}];
+            animal_means_4F = [animal_means_4F; {current_an, window_labels_4F{2}, sex_val, mean_dusk}];
+            animal_means_4F = [animal_means_4F; {current_an, window_labels_4F{3}, sex_val, mean_night}];
+            animal_means_4F = [animal_means_4F; {current_an, window_labels_4F{4}, sex_val, mean_dawn}];
         end
         
-        % Plotting
+        % 3. Plotting
         plotTable_4F = cell2table(animal_means_4F, 'VariableNames', {'Animal', 'Window', 'Sex', 'MeanActivity'});
         plotTable_4F.Window = categorical(plotTable_4F.Window, window_labels_4F);
+        
         violinplot(plotTable_4F.MeanActivity, plotTable_4F.Window, 'Parent', ax4F, 'GroupOrder', window_labels_4F, 'ShowData', false, 'ViolinColor', grayColor);
         
-        % Scatter
+        % Scatter Overlay
         jitterAmount = 0.15;
         for i_win = 1:length(window_labels_4F)
             win_data = plotTable_4F(plotTable_4F.Window == window_labels_4F{i_win}, :);
             x_scatter = i_win + (rand(height(win_data), 1) - 0.5) * jitterAmount;
+            
             male_idx = strcmp(win_data.Sex, 'Male');
             scatter(ax4F, x_scatter(male_idx), win_data.MeanActivity(male_idx), 40, maleColor, 'filled', 'MarkerFaceAlpha', 0.9);
             scatter(ax4F, x_scatter(~male_idx), win_data.MeanActivity(~male_idx), 40, femaleColor, 'filled', 'MarkerFaceAlpha', 0.9);
         end
         
-        % Stats (Paired t-test)
-        disp('--- STATS: Figure 4F (Anticipatory Peak) ---');
+        % 4. Stats (Paired T-Tests)
+        disp('--- STATS: Figure 4F (Anticipatory Peaks) ---');
         piv_4F = unstack(plotTable_4F, 'MeanActivity', 'Window', 'GroupingVariables', 'Animal');
-        % Vars will be named roughly 'FD_Lights_ON...' and 'FD_Anticipation...'
-        % We find them dynamically to be safe
+        
+        % Dynamically find column names to be safe
         vars = piv_4F.Properties.VariableNames;
-        col_base = vars{contains(vars, '0_11')};
-        col_anti = vars{contains(vars, '10_12')};
+        col_day   = vars{contains(vars, 'Day')};
+        col_dusk  = vars{contains(vars, 'Dusk')};
+        col_night = vars{contains(vars, 'Night')};
+        col_dawn  = vars{contains(vars, 'Dawn')};
         
-        [~, p_peak] = ttest(piv_4F.(col_base), piv_4F.(col_anti));
-        fprintf('Paired T-Test | Baseline (0-11) vs Anticipation (10-12): p = %.4f\n', p_peak);
+        % Test 1: Day Avg vs Dusk Anti
+        [~, p_dusk] = ttest(piv_4F.(col_day), piv_4F.(col_dusk));
+        fprintf('Paired T-Test | Day Avg vs Dusk Anti:   p = %.4f\n', p_dusk);
         
-        % Plot Bar if Significant (We hypothesize it is NOT, so hopefully no bar appears)
-        if p_peak < 0.05
-            y_max = max(plotTable_4F.MeanActivity);
-            plot_sig_bar(ax4F, [1, 2], p_peak, y_max*1.05, 0.05);
+        % Test 2: Night Avg vs Dawn Anti
+        [~, p_dawn] = ttest(piv_4F.(col_night), piv_4F.(col_dawn));
+        fprintf('Paired T-Test | Night Avg vs Dawn Anti: p = %.4f\n', p_dawn);
+        
+        % Plot Significance Bars (Alpha 0.05)
+        y_max = max(plotTable_4F.MeanActivity);
+        y_range = y_max - min(plotTable_4F.MeanActivity);
+        y_pos = y_max + 0.05 * y_range;
+        
+        if p_dusk < 0.05
+            plot_sig_bar(ax4F, [1, 2], p_dusk, y_pos, 0.05);
+            y_pos = y_pos + 0.1 * y_range; % Stack bars if needed
+        end
+        
+        if p_dawn < 0.05
+            plot_sig_bar(ax4F, [3, 4], p_dawn, y_pos, 0.05);
         end
         
         ylabel(ax4F, ['Mean ', current_metric_ylabel]);
         title(ax4F, sprintf('FullDark Anticipation (%s)', strrep(current_metric_suffix,'_',' ')));
-        set(ax4F, 'Position', [0.13 0.2 0.775 0.7]);
+        set(ax4F, 'Position', [0.13 0.2 0.775 0.7]); 
+        
         fig_filename = fullfile(savePath_Fig4, sprintf('Figure4F_FullDarkAnticipation_%s.png', current_metric_suffix));
         exportgraphics(hFig4F_current, fig_filename); disp(['Saved: ', fig_filename]); close(hFig4F_current);
         
