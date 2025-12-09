@@ -1470,26 +1470,37 @@ for met_idx = 1:length(activity_metrics_to_plot)
         f_mean = mean(female_diffs, 1, 'omitnan');
         
         bar(ax5C, 0:23, [m_mean; f_mean]', 0.9);
-        
         plot(xlim, [0 0], 'k--');
         
         % Stats: Independent T-Test (Male diff vs Female diff)
+        fprintf('\n--- STATS: Figure 5C (Hourly Male vs Female Change) ---\n');
         p_values = ones(24, 1);
+        alpha_5C = 0.05 / 24;
+        
+        fprintf('Bonferroni Alpha: %.6f\n', alpha_5C);
+        fprintf('%-5s | %-12s\n', 'ZT', 'P-Value');
+        fprintf('-------------------\n');
+        
         for zt = 1:24
             if ~all(isnan(male_diffs(:,zt))) && ~all(isnan(female_diffs(:,zt)))
                 [~, p] = ttest2(male_diffs(:, zt), female_diffs(:, zt)); 
                 p_values(zt) = p; 
+                
+                % Print every p-value for inspection
+                sig_flag = '';
+                if p < alpha_5C, sig_flag = '*'; end
+                fprintf('ZT %-2d | p = %.4f %s\n', zt-1, p, sig_flag);
             end
         end
+        fprintf('-------------------\n');
         
         % Plot Asterisks
-        alpha_5C = 0.05 / 24;
         sig_idx = find(p_values < alpha_5C);
         if ~isempty(sig_idx)
             zt_sig = sig_idx - 1;
             % Find highest bar at that index to place asterisk
             y_tops = max([m_mean(sig_idx); f_mean(sig_idx)], [], 1)';
-            % Handle negative bars (if max is negative, place asterisk above 0 or just above the "less negative" one)
+            % Handle negative bars
             y_tops(y_tops < 0) = 0; 
             y_range = max([m_mean(:); f_mean(:)]) - min([m_mean(:); f_mean(:)]);
             
