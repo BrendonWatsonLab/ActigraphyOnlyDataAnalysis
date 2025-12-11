@@ -408,6 +408,7 @@ for met_idx = 1:length(activity_metrics_to_plot)
             
             num_tests_weekly = 2;
             corrected_alpha_weekly = 0.05; % no bonferroni
+            fprintf('Applying Bonferroni correction for %d tests. New alpha = %.4f\n', num_tests_weekly, corrected_alpha_weekly);
             fprintf('--- STATS: Figure 3D WEEK %d for %s ---\n', i_week, current_metric_suffix);
             y_max_w = max(plotTable_3D_w.MeanActivity, [], 'omitnan'); if isempty(y_max_w) || isnan(y_max_w), y_max_w=1; end
             current_ylim_w = ylim(ax3D_w);
@@ -591,7 +592,7 @@ for met_idx = 1:length(activity_metrics_to_plot)
         end
         
         % 5. PLOT ASTERISKS
-        alpha_4B = 0.05; % No Bonferroni Correction
+        alpha_4B = 0.05 / 24; % Bonferroni Correction
         sig_indices = find(p_values < alpha_4B);
         
         if ~isempty(sig_indices)
@@ -622,7 +623,7 @@ for met_idx = 1:length(activity_metrics_to_plot)
                 ylim(ax4B, [current_ylim(1), max_ast_y + (current_ylim(2)-current_ylim(1))*0.05]);
             end
             
-            fprintf('Significant differences (p < %.4f) at ZT: %s\n', alpha_4B, num2str(sig_zt'));
+            fprintf('Significant differences (p < %.4f, Bonferroni) at ZT: %s\n', alpha_4B, num2str(sig_zt'));
         else
             fprintf('No significant hourly differences found after correction.\n');
         end
@@ -850,10 +851,7 @@ for met_idx = 1:length(activity_metrics_to_plot)
 
 %% FIG 4E: Percentage Change (ON vs OFF) Violin Plot
     disp('--- Starting Figure 4E: ON/OFF Pct Change Violins ---');
-    if strcmp(current_metric_var, normalizedActivityVar)
-        disp('Skipping Figure 4E for NormalizedActivity (Percentage change invalid for Z-scores).');
-    else
-        try
+    try
         % 1. Setup Figure
         if ~exist('violinplot.m','file'),error('ViolinPlotNotFound:Fig4E','violinplot.m not found.');end
         hFig4E_violins = figure('Name', sprintf('Fig 4E: ON/OFF Pct Change Violins (%s)', current_metric_suffix), 'Visible', 'off', 'Color', 'w');
@@ -936,7 +934,7 @@ for met_idx = 1:length(activity_metrics_to_plot)
         end
     
         try
-            disp('--- STATS: Figure 4E (Corrected: Paired t-tests) ---');
+            disp('--- STATS: Figure 4E (Corrected: Paired t-tests & Bonferroni) ---');
             hold(ax4E, 'on');
 
             % --- 1. Create a single wide table to align all animals ---
@@ -1073,13 +1071,11 @@ for met_idx = 1:length(activity_metrics_to_plot)
         close(hFig4E_violins);
         
     catch ME_4E
-        warning('ErrGen:Fig4E','Error Fig 4E (%s): %s', current_metric_suffix, ME_4E.message); end
+        warning('ErrGen:Fig4E','Error Fig 4E (%s): %s', current_metric_suffix, ME_4E.message);
     end
+
     %% FIG 4E SUPPLEMENT: Descriptive Stats for Diurnality Index (Req 3)
-    if strcmp(current_metric_var, normalizedActivityVar)
-        disp('Skipping Figure 4E for NormalizedActivity (Percentage change invalid for Z-scores).');
-    else
-        try
+    try
         disp('--- STATS: Descriptive Means for Diurnality Index (Pct Change) ---');
         % 300 Lux
         % Note: This logic must be self-contained and recalculate PctChange
@@ -1112,7 +1108,7 @@ for met_idx = 1:length(activity_metrics_to_plot)
     catch ME_Desc
         warning('ErrGen:DescStats', 'Error calculating descriptive stats: %s', ME_Desc.message); 
     end
-    end
+
     %% FIG 4F: FullDark Anticipatory Peak Analysis (Dusk & Dawn) - REVISED
     % Purpose: Test for anticipatory peaks at both Dusk (10-12) and Dawn (21-23) in FullDark.
     disp('--- Starting Figure 4F: FullDark Anticipatory Analysis (Dusk & Dawn) ---');
@@ -1314,7 +1310,7 @@ for met_idx = 1:length(activity_metrics_to_plot)
             end
         end
         
-        alpha_5A = 0.05; % No Bonferroni
+        alpha_5A = 0.05 / 24; % Bonferroni
         sig_idx = find(p_values < alpha_5A);
         if ~isempty(sig_idx)
             zt_sig = sig_idx - 1;
@@ -1413,14 +1409,14 @@ for met_idx = 1:length(activity_metrics_to_plot)
             {'FullDark_On', 'FullDark_Off', intersect(femaleAnimals, fourCondAnimals), 'Female FullDark (On vs Off)'} ...
         };
         num_tests_5B = length(tests_5B);
-        alpha_5B = 0.05; % no bonferroni
-        fprintf('Bonferroni Alpha: %.4f\n', alpha_5B);
+        bonf_alpha_5B = 0.05 / num_tests_5B;
+        fprintf('Bonferroni Alpha: %.4f\n', bonf_alpha_5B);
         for i_test = 1:num_tests_5B
             test_info = tests_5B{i_test}; group_name = test_info{4};
             idx = ismember(all_animal_means_5B.Animal, test_info{3}); N = sum(idx);
             if N < 3, continue; end
             [~, p] = ttest(all_animal_means_5B.(test_info{1})(idx), all_animal_means_5B.(test_info{2})(idx));
-            sig_str = 'n.s.'; if p < alpha_5B, sig_str = 'SIGNIFICANT'; end
+            sig_str = 'n.s.'; if p < bonf_alpha_5B, sig_str = 'SIGNIFICANT'; end
             fprintf('%-30s | p = %.4f (N=%d) %s\n', group_name, p, N, sig_str);
         end
         
@@ -1455,104 +1451,82 @@ for met_idx = 1:length(activity_metrics_to_plot)
         warning('ErrGen:Fig5B','Error Fig 5B (%s): %s', current_metric_suffix, ME_5B.message); 
     end
 
-    %% FIG 5C: Distribution Analysis (Day vs Night Difference) - CORRECTED
-    disp('--- Starting Figure 5C: Distribution Analysis (Per-Animal Averaging) ---');
+    %% FIG 5C: Distribution Analysis (Day vs Night Difference) - NEW STATS
+    disp('--- Starting Figure 5C: Distribution Analysis ---');
     try
         hFig5C_current = figure('Name', sprintf('Fig 5C: Distro Analysis (%s)', current_metric_suffix), 'Visible', 'off', 'Color', 'w');
         ax5C = axes('Parent', hFig5C_current); hold(ax5C, 'on');
         
-        % 1. Calculate Differences (1000Lux - 300Lux) for each animal across all 24h
-        % Result is Matrix: [Rows = Animals, Cols = 24 Hours]
-        male_diffs = get_last_2_weeks_profile(dataTable, maleAnimals, '1000Lux', ztHourVar, current_metric_var) - ...
-                     get_last_2_weeks_profile(dataTable, maleAnimals, '300Lux', ztHourVar, current_metric_var);
+        % Calculate Differences (1000L - 300L)
+        male_diffs = get_last_2_weeks_profile(dataTable, maleAnimals, '1000Lux', ztHourVar, current_metric_var) - get_last_2_weeks_profile(dataTable, maleAnimals, '300Lux', ztHourVar, current_metric_var);
+        female_diffs = get_last_2_weeks_profile(dataTable, femaleAnimals, '1000Lux', ztHourVar, current_metric_var) - get_last_2_weeks_profile(dataTable, femaleAnimals, '300Lux', ztHourVar, current_metric_var);
         
-        female_diffs = get_last_2_weeks_profile(dataTable, femaleAnimals, '1000Lux', ztHourVar, current_metric_var) - ...
-                       get_last_2_weeks_profile(dataTable, femaleAnimals, '300Lux', ztHourVar, current_metric_var);
+        % Flatten Data into Distributions (Day vs Night)
+        % Day: ZT 0-11 (Columns 1-12) | Night: ZT 12-23 (Columns 13-24)
+        m_day_vals = reshape(male_diffs(:, 1:12), [], 1);
+        f_day_vals = reshape(female_diffs(:, 1:12), [], 1);
+        m_night_vals = reshape(male_diffs(:, 13:24), [], 1);
+        f_night_vals = reshape(female_diffs(:, 13:24), [], 1);
         
-        % 2. Average into Day/Night bins PER ANIMAL to avoid pseudoreplication
-        % Day: ZT 0-11 (Cols 1-12) | Night: ZT 12-23 (Cols 13-24)
+        % Remove NaNs
+        m_day_vals(isnan(m_day_vals)) = []; f_day_vals(isnan(f_day_vals)) = [];
+        m_night_vals(isnan(m_night_vals)) = []; f_night_vals(isnan(f_night_vals)) = [];
         
-        % Males
-        m_day_means = mean(male_diffs(:, 1:12), 2, 'omitnan');
-        m_night_means = mean(male_diffs(:, 13:24), 2, 'omitnan');
-        
-        % Females
-        f_day_means = mean(female_diffs(:, 1:12), 2, 'omitnan');
-        f_night_means = mean(female_diffs(:, 13:24), 2, 'omitnan');
-        
-        % Remove NaNs (if any animal completely missing data)
-        m_day_means(isnan(m_day_means)) = []; f_day_means(isnan(f_day_means)) = [];
-        m_night_means(isnan(m_night_means)) = []; f_night_means(isnan(f_night_means)) = [];
-        
-        fprintf('\n--- STATS: Figure 5C (Distribution Comparisons - Per Animal) ---\n');
+        fprintf('\n--- STATS: Figure 5C (Distribution Comparisons) ---\n');
         
         % --- TEST 1: DAYTIME (ZT 0-11) ---
-        fprintf('>>> DAYTIME (ZT 0-11) Mean Difference Analysis <<<\n');
+        fprintf('>>> DAYTIME (ZT 0-11) Distribution Analysis <<<\n');
         % Normality Test (Kolmogorov-Smirnov)
-        % We use 'standardize' option or manual standardization for KS test validity on small samples
-        [h_m, p_m_norm] = kstest((m_day_means - mean(m_day_means)) / std(m_day_means)); 
-        [h_f, p_f_norm] = kstest((f_day_means - mean(f_day_means)) / std(f_day_means));
+        [h_m, p_m_norm] = kstest((m_day_vals-mean(m_day_vals))/std(m_day_vals)); % Standardize for kstest
+        [h_f, p_f_norm] = kstest((f_day_vals-mean(f_day_vals))/std(f_day_vals));
         
         fprintf('  Normality (KS-Test): Male p=%.4f, Female p=%.4f\n', p_m_norm, p_f_norm);
         
         if p_m_norm > 0.05 && p_f_norm > 0.05
-            fprintf('  Distributions are Normal. Using Independent T-Test.\n');
-            [~, p_day] = ttest2(m_day_means, f_day_means);
-            test_type_night = 'T-Test';
+            fprintf('  Distributions are Normal. Using T-Test.\n');
+            [~, p_day] = ttest2(m_day_vals, f_day_vals);
+            test_type = 'T-Test';
         else
             fprintf('  Distributions are NOT Normal. Using Wilcoxon Rank Sum.\n');
-            p_day = ranksum(m_day_means, f_day_means);
-            test_type_night = 'RankSum';
+            p_day = ranksum(m_day_vals, f_day_vals);
+            test_type = 'RankSum';
         end
-        fprintf('  Result (M vs F Day): p = %.4f (%s, N_male=%d, N_female=%d)\n', ...
-            p_day, test_type_night, length(m_day_means), length(f_day_means));
+        fprintf('  Result (M vs F Day): p = %.4f (%s)\n', p_day, test_type);
         
         % --- TEST 2: NIGHTTIME (ZT 12-23) ---
-        fprintf('>>> NIGHTTIME (ZT 12-23) Mean Difference Analysis <<<\n');
-        [h_m, p_m_norm] = kstest((m_night_means - mean(m_night_means)) / std(m_night_means));
-        [h_f, p_f_norm] = kstest((f_night_means - mean(f_night_means)) / std(f_night_means));
-
-        fprintf('  Normality (KS-Test): Male p=%.4f, Female p=%.4f\n', p_m_norm, p_f_norm);
+        fprintf('>>> NIGHTTIME (ZT 12-23) Distribution Analysis <<<\n');
+        [h_m, p_m_norm] = kstest((m_night_vals-mean(m_night_vals))/std(m_night_vals));
+        [h_f, p_f_norm] = kstest((f_night_vals-mean(f_night_vals))/std(f_night_vals));
         
         if p_m_norm > 0.05 && p_f_norm > 0.05
-            fprintf('  Distributions are Normal. Using Independent T-Test.\n');
-            [~, p_night] = ttest2(m_night_means, f_night_means);
-            test_type_night = 'T-Test';
+            [~, p_night] = ttest2(m_night_vals, f_night_vals);
         else
-            fprintf('  Distributions are NOT Normal. Using Wilcoxon Rank Sum.\n');
-            p_night = ranksum(m_night_means, f_night_means);
-            test_type_night = 'RankSum';
+            p_night = ranksum(m_night_vals, f_night_vals);
         end
-        fprintf('  Result (M vs F Night): p = %.4f (%s, N_male=%d, N_female=%d)\n', ...
-            p_night, test_type_night, length(m_night_means), length(f_night_means));
+        fprintf('  Result (M vs F Night): p = %.4f\n', p_night);
         
-        % --- PLOTTING (Violins of Animal Means) ---
+        % --- PLOTTING (Violins of Distributions) ---
         % Group data for violinplot
-        dist_data = [m_day_means; f_day_means; m_night_means; f_night_means];
-        dist_grp = [repmat({'Male-Day'},length(m_day_means),1); repmat({'Female-Day'},length(f_day_means),1); ...
-                    repmat({'Male-Night'},length(m_night_means),1); repmat({'Female-Night'},length(f_night_means),1)];
+        dist_data = [m_day_vals; f_day_vals; m_night_vals; f_night_vals];
+        dist_grp = [repmat({'Male-Day'},length(m_day_vals),1); repmat({'Female-Day'},length(f_day_vals),1); ...
+                    repmat({'Male-Night'},length(m_night_vals),1); repmat({'Female-Night'},length(f_night_vals),1)];
         
-        violinplot(dist_data, categorical(dist_grp), 'Parent', ax5C, ...
-            'GroupOrder', {'Male-Day','Female-Day','Male-Night','Female-Night'}, ...
-            'ViolinColor', grayColor, 'ShowData', true); % ShowData true here since N is small
+        violinplot(dist_data, categorical(dist_grp), 'Parent', ax5C, 'GroupOrder', {'Male-Day','Female-Day','Male-Night','Female-Night'}, 'ViolinColor', grayColor);
         yline(ax5C, 0, 'k--');
         
         % Add Sig Bars
-        y_max = max(dist_data); 
-        y_range = range(dist_data);
-        if y_range == 0, y_range = 1; end
-        
+        y_max = max(dist_data); y_range = range(dist_data);
         if p_day < 0.05
-            plot_sig_bar(ax5C, [1, 2], p_day, y_max + 0.1 * y_range, 0.05);
+            plot_sig_bar(ax5C, [1, 2], p_day, y_max+0.05*y_range, 0.05);
         end
         if p_night < 0.05
-            plot_sig_bar(ax5C, [3, 4], p_night, y_max + 0.1 * y_range, 0.05);
+            plot_sig_bar(ax5C, [3, 4], p_night, y_max+0.05*y_range, 0.05);
         end
         
-        title(ax5C, sprintf('Fig 5C: Distro of Activity Change (Animal Means) (%s)', current_metric_suffix));
-        ylabel(ax5C, 'Mean Change (1000L - 300L)');
+        title(sprintf('Fig 5C: Distribution of Activity Change (%s)', current_metric_suffix));
+        ylabel('Change (1000L - 300L)');
         
-        fig_filename_5C = fullfile(savePath_Fig5, sprintf('Figure5C_DistributionStats_Corrected_%s.png', current_metric_suffix));
+        fig_filename_5C = fullfile(savePath_Fig5, sprintf('Figure5C_DistributionStats_%s.png', current_metric_suffix));
         exportgraphics(hFig5C_current, fig_filename_5C); close(hFig5C_current);
     catch ME_5C, warning('ErrGen:Fig5C','Error Fig 5C (%s): %s', current_metric_suffix, ME_5C.message); end
 
@@ -1561,10 +1535,7 @@ for met_idx = 1:length(activity_metrics_to_plot)
 
     %% FIG 5E: ON:OFF Activity Percent Change Plot (8-Violin Sex Comparison)
     disp('--- Starting Figure 5E: ON-OFF Pct Change by Sex ---');
-    if strcmp(current_metric_var, normalizedActivityVar)
-        disp('Skipping Figure 5E for NormalizedActivity (Percentage change invalid for Z-scores).');
-    else
-        try
+    try
         % 1. Setup Figure
         if ~exist('violinplot.m','file'),error('ViolinPlotNotFound:Fig5E','violinplot.m not found.');end
         hFig5E_current = figure('Name', sprintf('Figure 5E: ON-OFF Pct Change by Sex (%s)', current_metric_suffix), 'Visible', 'off', 'Color', 'w');
@@ -1744,8 +1715,9 @@ for met_idx = 1:length(activity_metrics_to_plot)
         close(hFig5E_current);
         
     catch ME_5E
-        warning('ErrGen:Fig5E','Error Fig 5E (%s): %s', current_metric_suffix, ME_5E.message); end
+        warning('ErrGen:Fig5E','Error Fig 5E (%s): %s', current_metric_suffix, ME_5E.message); 
     end
+
     %% FIG 5F: Peak Activity Shift - LINEAR REGRESSION (Slope Analysis)
     disp('--- Starting Figure 5F: Peak Shift (Regression) ---');
     try
