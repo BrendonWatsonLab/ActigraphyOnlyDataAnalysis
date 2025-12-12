@@ -599,7 +599,7 @@ for met_idx = 1:length(activity_metrics_to_plot)
             sig_zt = sig_indices - 1;
             
             % Calculate Y-positions for asterisks
-            % We want them slightly above the higher of the two lines at that hour
+            % Want them slightly above the higher of the two lines at that hour
             y_asterisks = NaN(size(sig_zt));
             prof_300 = mean_profiles.('300Lux');
             prof_1000 = mean_profiles.('1000Lux');
@@ -733,7 +733,10 @@ for met_idx = 1:length(activity_metrics_to_plot)
 
     %% FIG 4D: Shift in Activity Peaks During FullDark (CIRCULAR STATS + CoG PEAK)
     disp('--- Starting Figure 4D: Peak Shift (Center of Gravity) ---');
-    try
+    if strcmp(current_metric_var, normalizedActivityVar)
+        disp('Skipping Figure 4E for NormalizedActivity (Percentage change invalid for Z-scores).');
+    else
+        try
         hFig4D_peak = figure('Name', sprintf('Fig 4D: Peak Shift in FullDark (%s)', current_metric_suffix), 'Visible', 'off', 'Color', 'w');
         ax4D = axes('Parent', hFig4D_peak);
         
@@ -847,7 +850,7 @@ for met_idx = 1:length(activity_metrics_to_plot)
         fig_filename = fullfile(savePath_Fig4, sprintf('Figure4D_PeakShift_CoG_%s.png', current_metric_suffix));
         exportgraphics(hFig4D_peak, fig_filename); disp(['Saved: ', fig_filename]); close(hFig4D_peak);
     catch ME_4D, warning('ErrGen:Fig4D','Error Fig 4D (%s): %s', current_metric_suffix, ME_4D.message); end
-
+    end
 %% FIG 4E: Percentage Change (ON vs OFF) Violin Plot
     disp('--- Starting Figure 4E: ON/OFF Pct Change Violins ---');
     if strcmp(current_metric_var, normalizedActivityVar)
@@ -1423,12 +1426,7 @@ for met_idx = 1:length(activity_metrics_to_plot)
             sig_str = 'n.s.'; if p < alpha_5B, sig_str = 'SIGNIFICANT'; end
             fprintf('%-30s | p = %.4f (N=%d) %s\n', group_name, p, N, sig_str);
         end
-        
-        % --- OPTIONAL: Linear Mixed Effects Model (LME) instead of RM ANOVA ---
-        % LME is better handles missing data and can model heterogeneous variance, 
-        % but for this report, we will stick to the standard ANOVA output for consistency,
-        % relying on the Descriptive Stats above to explain the variance.
-        
+
         stat_table_clean = all_animal_means_5B;
         stat_table_clean.Properties.VariableNames = matlab.lang.makeValidName(stat_table_clean.Properties.VariableNames);
         for i_sex = 1:length(sex_labels)
@@ -1455,101 +1453,86 @@ for met_idx = 1:length(activity_metrics_to_plot)
         warning('ErrGen:Fig5B','Error Fig 5B (%s): %s', current_metric_suffix, ME_5B.message); 
     end
 
-    %% FIG 5C: Distribution Analysis (Day vs Night Difference) - CORRECTED
+    %% FIG 5C: Distribution Analysis (Day vs Night Difference) - COLOR CORRECTED
     disp('--- Starting Figure 5C: Distribution Analysis (Per-Animal Averaging) ---');
     try
         hFig5C_current = figure('Name', sprintf('Fig 5C: Distro Analysis (%s)', current_metric_suffix), 'Visible', 'off', 'Color', 'w');
         ax5C = axes('Parent', hFig5C_current); hold(ax5C, 'on');
         
-        % 1. Calculate Differences (1000Lux - 300Lux) for each animal across all 24h
-        % Result is Matrix: [Rows = Animals, Cols = 24 Hours]
+        % 1. Calculate Differences (1000Lux - 300Lux)
         male_diffs = get_last_2_weeks_profile(dataTable, maleAnimals, '1000Lux', ztHourVar, current_metric_var) - ...
                      get_last_2_weeks_profile(dataTable, maleAnimals, '300Lux', ztHourVar, current_metric_var);
         
         female_diffs = get_last_2_weeks_profile(dataTable, femaleAnimals, '1000Lux', ztHourVar, current_metric_var) - ...
                        get_last_2_weeks_profile(dataTable, femaleAnimals, '300Lux', ztHourVar, current_metric_var);
         
-        % 2. Average into Day/Night bins PER ANIMAL to avoid pseudoreplication
-        % Day: ZT 0-11 (Cols 1-12) | Night: ZT 12-23 (Cols 13-24)
-        
-        % Males
+        % 2. Average into Day/Night bins PER ANIMAL
         m_day_means = mean(male_diffs(:, 1:12), 2, 'omitnan');
         m_night_means = mean(male_diffs(:, 13:24), 2, 'omitnan');
-        
-        % Females
         f_day_means = mean(female_diffs(:, 1:12), 2, 'omitnan');
         f_night_means = mean(female_diffs(:, 13:24), 2, 'omitnan');
         
-        % Remove NaNs (if any animal completely missing data)
+        % Remove NaNs
         m_day_means(isnan(m_day_means)) = []; f_day_means(isnan(f_day_means)) = [];
         m_night_means(isnan(m_night_means)) = []; f_night_means(isnan(f_night_means)) = [];
         
         fprintf('\n--- STATS: Figure 5C (Distribution Comparisons - Per Animal) ---\n');
         
-        % --- TEST 1: DAYTIME (ZT 0-11) ---
+        % --- STATS CALCULATIONS (Identical logic as before) ---
         fprintf('>>> DAYTIME (ZT 0-11) Mean Difference Analysis <<<\n');
-        % Normality Test (Kolmogorov-Smirnov)
-        % We use 'standardize' option or manual standardization for KS test validity on small samples
         [h_m, p_m_norm] = kstest((m_day_means - mean(m_day_means)) / std(m_day_means)); 
         [h_f, p_f_norm] = kstest((f_day_means - mean(f_day_means)) / std(f_day_means));
         
-        fprintf('  Normality (KS-Test): Male p=%.4f, Female p=%.4f\n', p_m_norm, p_f_norm);
-        
         if p_m_norm > 0.05 && p_f_norm > 0.05
-            fprintf('  Distributions are Normal. Using Independent T-Test.\n');
             [~, p_day] = ttest2(m_day_means, f_day_means);
-            test_type_night = 'T-Test';
         else
-            fprintf('  Distributions are NOT Normal. Using Wilcoxon Rank Sum.\n');
             p_day = ranksum(m_day_means, f_day_means);
-            test_type_night = 'RankSum';
         end
-        fprintf('  Result (M vs F Day): p = %.4f (%s, N_male=%d, N_female=%d)\n', ...
-            p_day, test_type_night, length(m_day_means), length(f_day_means));
+        fprintf('  Result (M vs F Day): p = %.4f\n', p_day);
         
-        % --- TEST 2: NIGHTTIME (ZT 12-23) ---
         fprintf('>>> NIGHTTIME (ZT 12-23) Mean Difference Analysis <<<\n');
         [h_m, p_m_norm] = kstest((m_night_means - mean(m_night_means)) / std(m_night_means));
         [h_f, p_f_norm] = kstest((f_night_means - mean(f_night_means)) / std(f_night_means));
-
-        fprintf('  Normality (KS-Test): Male p=%.4f, Female p=%.4f\n', p_m_norm, p_f_norm);
         
         if p_m_norm > 0.05 && p_f_norm > 0.05
-            fprintf('  Distributions are Normal. Using Independent T-Test.\n');
             [~, p_night] = ttest2(m_night_means, f_night_means);
-            test_type_night = 'T-Test';
         else
-            fprintf('  Distributions are NOT Normal. Using Wilcoxon Rank Sum.\n');
             p_night = ranksum(m_night_means, f_night_means);
-            test_type_night = 'RankSum';
         end
-        fprintf('  Result (M vs F Night): p = %.4f (%s, N_male=%d, N_female=%d)\n', ...
-            p_night, test_type_night, length(m_night_means), length(f_night_means));
+        fprintf('  Result (M vs F Night): p = %.4f\n', p_night);
         
-        % --- PLOTTING (Violins of Animal Means) ---
-        % Group data for violinplot
+        % --- PLOTTING (Violins with Specific Colors) ---
         dist_data = [m_day_means; f_day_means; m_night_means; f_night_means];
         dist_grp = [repmat({'Male-Day'},length(m_day_means),1); repmat({'Female-Day'},length(f_day_means),1); ...
                     repmat({'Male-Night'},length(m_night_means),1); repmat({'Female-Night'},length(f_night_means),1)];
         
+        % Draw Violins (Gray background)
         violinplot(dist_data, categorical(dist_grp), 'Parent', ax5C, ...
             'GroupOrder', {'Male-Day','Female-Day','Male-Night','Female-Night'}, ...
-            'ViolinColor', grayColor, 'ShowData', true); % ShowData true here since N is small
+            'ViolinColor', grayColor, 'ShowData', false);
         yline(ax5C, 0, 'k--');
         
-        % Add Sig Bars
-        y_max = max(dist_data); 
-        y_range = range(dist_data);
-        if y_range == 0, y_range = 1; end
+        % Overlay Scatter Points Manually to Control Color
+        jitterAmount = 0.15;
+        groups = {'Male-Day', 'Female-Day', 'Male-Night', 'Female-Night'};
+        data_cells = {m_day_means, f_day_means, m_night_means, f_night_means};
         
-        if p_day < 0.05
-            plot_sig_bar(ax5C, [1, 2], p_day, y_max + 0.1 * y_range, 0.05);
-        end
-        if p_night < 0.05
-            plot_sig_bar(ax5C, [3, 4], p_night, y_max + 0.1 * y_range, 0.05);
+        for i = 1:4
+            pts = data_cells{i};
+            x_pos = i + (rand(size(pts))-0.5)*jitterAmount;
+            
+            % Assign Color based on Group Name
+            if contains(groups{i}, 'Male'), col = maleColor; else, col = femaleColor; end
+            
+            scatter(ax5C, x_pos, pts, 40, col, 'filled', 'MarkerFaceAlpha', 0.9);
         end
         
-        title(ax5C, sprintf('Fig 5C: Distro of Activity Change (Animal Means) (%s)', current_metric_suffix));
+        % Sig Bars
+        y_max = max(dist_data); y_range = range(dist_data); if y_range==0, y_range=1; end
+        if p_day < 0.05, plot_sig_bar(ax5C, [1, 2], p_day, y_max + 0.1*y_range, 0.05); end
+        if p_night < 0.05, plot_sig_bar(ax5C, [3, 4], p_night, y_max + 0.1*y_range, 0.05); end
+        
+        title(ax5C, sprintf('Fig 5C: Distro of Activity Change (%s)', current_metric_suffix));
         ylabel(ax5C, 'Mean Change (1000L - 300L)');
         
         fig_filename_5C = fullfile(savePath_Fig5, sprintf('Figure5C_DistributionStats_Corrected_%s.png', current_metric_suffix));
@@ -1746,100 +1729,128 @@ for met_idx = 1:length(activity_metrics_to_plot)
     catch ME_5E
         warning('ErrGen:Fig5E','Error Fig 5E (%s): %s', current_metric_suffix, ME_5E.message); end
     end
-    %% FIG 5F: Peak Activity Shift - LINEAR REGRESSION (Slope Analysis)
-    disp('--- Starting Figure 5F: Peak Shift (Regression) ---');
-    try
-        hFig5F_peak = figure('Name', sprintf('Fig 5F: Regression Shift (%s)', current_metric_suffix), 'Visible', 'off', 'Color', 'w');
+    %% FIG 5F: Peak Activity Shift (First vs Last Week) - CIRCULAR STATS
+    disp('--- Starting Figure 5F: Peak Shift (First vs Last Week CoG) ---');
+    if strcmp(current_metric_var, normalizedActivityVar)
+        disp('Skipping Figure 4E for NormalizedActivity (Percentage change invalid for Z-scores).');
+    else
+        try
+        hFig5F_peak = figure('Name', sprintf('Fig 5F: Peak Shift CoG (%s)', current_metric_suffix), 'Visible', 'off', 'Color', 'w');
         ax5F = axes('Parent', hFig5F_peak); hold(ax5F, 'on');
-        sex_colors = {femaleColor, maleColor}; 
-        fprintf('\n--- STATS: Figure 5F (Linear Regression Slope) ---\n');
+        sex_colors = {maleColor, femaleColor}; 
+        
+        fprintf('\n--- STATS: Figure 5F (First Week vs Last Week Shift) ---\n');
         
         for i_sex = 1:length(sex_labels)
             sex_str = sex_labels{i_sex};
             sex_animals_all = sex_groups{i_sex};
             sex_color = sex_colors{i_sex};
+            
+            % Filter for animals that have FullDark data
             animals_to_test = intersect(sex_animals_all, fourCondAnimals);
             if isempty(animals_to_test), continue; end
             
-            % Gather all daily peak points for regression
-            all_days = [];
-            all_peaks = [];
-            
-            % (Reuse previous loop logic to get peaks)
+            % Get FullDark Data
             data_FD_sex = dataTable(ismember(dataTable.Animal, animals_to_test) & dataTable.Condition == 'FullDark', :);
             unique_days_FD = unique(data_FD_sex.DayOfCondition);
+            
+            % Pre-allocate: Rows=Days, Cols=Animals
+            animal_daily_peaks = NaN(length(unique_days_FD), length(animals_to_test));
             
             for i_an = 1:length(animals_to_test)
                 an_id = animals_to_test(i_an);
                 data_an = data_FD_sex(data_FD_sex.Animal == an_id, :);
+                
                 for i_day = 1:length(unique_days_FD)
                     d_val = unique_days_FD(i_day);
                     d_dat = data_an(data_an.DayOfCondition == d_val, :);
+                    
                     if ~isempty(d_dat)
                         % CoG Calculation
                         h_mean = groupsummary(d_dat, ztHourVar, 'mean', current_metric_var);
                         if ~isempty(h_mean)
-                            activity = h_mean.(['mean_', current_metric_var]); activity(activity<0)=0;
-                            if sum(activity)>0
+                            activity = h_mean.(['mean_', current_metric_var]); 
+                            activity(activity < 0) = 0; % Remove negative weights
+                            
+                            if sum(activity) > 0
+                                % Circular Center of Gravity
                                 angles = h_mean.(ztHourVar) * (2*pi/24);
-                                X = sum(activity .* cos(angles)); Y = sum(activity .* sin(angles));
-                                peak_zt = mod(atan2(Y,X) * (24/(2*pi)), 24);
+                                X = sum(activity .* cos(angles)); 
+                                Y = sum(activity .* sin(angles));
+                                mean_angle = atan2(Y, X);
+                                peak_zt = mod(mean_angle * (24/(2*pi)), 24);
                                 
-                                % Handle wrapping for linear regression (e.g., 23 -> 1 should be +2 not -22)
-                                % Simple unwrapping logic: if day 1 is ~8, day 2 is ~6, keep it. 
-                                % For now, plotting raw ZT. Regression might need unwrap() if crossing midnight.
-                                
-                                all_days = [all_days; d_val];
-                                all_peaks = [all_peaks; peak_zt];
+                                animal_daily_peaks(i_day, i_an) = peak_zt;
                             end
                         end
                     end
                 end
             end
             
-            % --- LINEAR REGRESSION ---
-            if length(all_days) > 5
-                % 1. Convert ZT (0-24) to Radians
-                peaks_rad = all_peaks * (2*pi/24);
-                
-                % 2. Unwrap to handle midnight crossings (removes jumps > pi)
-                peaks_unwrapped_rad = unwrap(peaks_rad);
-                
-                % 3. Convert back to continuous hours (can go > 24 or < 0)
-                peaks_linear = peaks_unwrapped_rad * (24/(2*pi));
-                
-                % 4. Run Fit on LINEARIZED peaks
-                mdl = fitlm(all_days, peaks_linear);
-                slope = mdl.Coefficients.Estimate(2);
-                p_slope = mdl.Coefficients.pValue(2);
-                r_sq = mdl.Rsquared.Ordinary;
-                
-                fprintf('Regression (%s): Slope = %.3f h/day, R2 = %.2f, p = %.4f\n', sex_str, slope, r_sq, p_slope);
-                
-                % Plot Fit Line
-                x_grid = linspace(min(all_days), max(all_days), 100)';
-                [y_pred, y_ci] = predict(mdl, x_grid);
-                plot(ax5F, x_grid, y_pred, 'Color', sex_color, 'LineWidth', 2, 'DisplayName', sprintf('%s (p=%.3f)', sex_str, p_slope));
-                
-                % Plot Fill for CI
-                fill(ax5F, [x_grid; flipud(x_grid)], [y_ci(:,1); flipud(y_ci(:,2))], sex_color, 'FaceAlpha', 0.1, 'EdgeColor', 'none', 'HandleVisibility', 'off');
-                
-                % Plot Scatter Points
-                scatter(ax5F, all_days, all_peaks, 20, sex_color, 'filled', 'MarkerFaceAlpha', 0.3, 'HandleVisibility', 'off');
+            % --- PLOT DAILY TRAJECTORY (Visual Context) ---
+            % Calculate daily circular means across animals for plotting
+            daily_means_sex = NaN(length(unique_days_FD), 1);
+            for d = 1:length(unique_days_FD)
+                day_peaks = animal_daily_peaks(d, :);
+                day_peaks = day_peaks(~isnan(day_peaks));
+                if ~isempty(day_peaks)
+                    rads = day_peaks * (2*pi/24);
+                    mean_ang = atan2(mean(sin(rads)), mean(cos(rads)));
+                    daily_means_sex(d) = mod(mean_ang * (24/(2*pi)), 24);
+                end
             end
+            plot(ax5F, unique_days_FD, daily_means_sex, 'o-', 'Color', sex_color, ...
+                'LineWidth', 1.5, 'DisplayName', sex_str, 'MarkerFaceColor', sex_color);
+            
+            % --- STATS: COMPARE FIRST WEEK VS LAST WEEK ---
+            % Define Weeks
+            first_week_idx = 1:min(7, length(unique_days_FD));
+            last_week_idx = max(1, length(unique_days_FD)-6):length(unique_days_FD);
+            
+            % Get Data subsets (CORRECTED VARIABLE NAMES)
+            first_week_peaks = animal_daily_peaks(first_week_idx, :);
+            last_week_peaks = animal_daily_peaks(last_week_idx, :);
+            
+            % Calculate Circular Mean PER ANIMAL for each block
+            % Function to average angles:
+            calc_circ_mean_cols = @(x) mod(atan2(mean(sin(x*2*pi/24),1,'omitnan'), mean(cos(x*2*pi/24),1,'omitnan')) * 24/(2*pi), 24);
+            
+            an_start_means = calc_circ_mean_cols(first_week_peaks); % 1 x N_animals
+            an_end_means = calc_circ_mean_cols(last_week_peaks);    % 1 x N_animals
+            
+            % Calculate Shift (Shortest distance)
+            % Shift = End - Start
+            shifts = mod(an_end_means - an_start_means + 12, 24) - 12;
+            
+            % One-Sample T-Test vs 0 (Equivalent to Paired T-Test)
+            [~, p_shift] = ttest(shifts, 0);
+            
+            % Grand Means for Reporting
+            grand_start = mod(atan2(mean(sin(an_start_means*2*pi/24)), mean(cos(an_start_means*2*pi/24))) * 24/(2*pi), 24);
+            grand_end = mod(atan2(mean(sin(an_end_means*2*pi/24)), mean(cos(an_end_means*2*pi/24))) * 24/(2*pi), 24);
+            mean_shift_val = mean(shifts, 'omitnan');
+            
+            fprintf('%s Comparison (N=%d):\n', sex_str, length(shifts));
+            fprintf('  First Week Mean ZT: %.2f\n', grand_start);
+            fprintf('  Last Week Mean ZT:  %.2f\n', grand_end);
+            fprintf('  Mean Shift:         %.2f hours\n', mean_shift_val);
+            fprintf('  Paired T-Test:      p = %.4f\n', p_shift);
         end
         
-        xlabel(ax5F, 'Day in Darkness'); ylabel(ax5F, 'Peak Activity (ZT)');
-        title(ax5F, sprintf('Fig 5F: Drift Analysis (Regression) (%s)', current_metric_suffix));
+        xlabel(ax5F, 'Day in Darkness'); 
+        ylabel(ax5F, 'Peak Activity ZT (CoG)');
+        title(ax5F, sprintf('Fig 5F: Daily Peak Activity (%s)', current_metric_suffix));
         legend(ax5F, 'Location', 'best');
+        ylim(ax5F, [0 24]); yticks(ax5F, 0:4:24);
+        grid(ax5F, 'on');
         
-        fig_filename = fullfile(savePath_Fig5, sprintf('Figure5F_RegressionSlope_%s.png', current_metric_suffix));
+        fig_filename = fullfile(savePath_Fig5, sprintf('Figure5F_FirstVsLastWeek_%s.png', current_metric_suffix));
         exportgraphics(hFig5F_peak, fig_filename); disp(['Saved: ', fig_filename]); close(hFig5F_peak);
         
     catch ME_5F
         warning('ErrGen:Fig5F','Error Fig 5F (%s): %s', current_metric_suffix, ME_5F.message); 
     end
-
+    end
     %% FIG 5G: Phase-Specific Percent Change (CORRECTED)
     % Comparison: % Change in ON vs OFF phases for Males vs Females across conditions.
     disp('--- Starting Figure 5G: Phase-Specific Pct Change ---');
@@ -2180,7 +2191,6 @@ for met_idx = 1:length(activity_metrics_to_plot)
         plotTable_5J = table();
         
         % --- 1. Data Collection Loop ---
-        % We rebuild the data structure specifically for these comparisons
         for i_c = 1:length(conds_to_compare)
             cond_name = conds_to_compare{i_c};
             
@@ -2263,7 +2273,7 @@ for met_idx = 1:length(activity_metrics_to_plot)
             % Filter data for this pair
             d_sub = piv_5J(strcmp(piv_5J.Sex, curr_sex) & strcmp(piv_5J.Phase, curr_phase), :);
             
-            % Ensure we have paired data (N>=3)
+            % Ensure paired data (N>=3)
             if height(d_sub) >= 3 && all(ismember({'x300Lux', 'x1000Lux'}, d_sub.Properties.VariableNames))
                  % Paired T-Test
                  [~, p] = ttest(d_sub.x300Lux, d_sub.x1000Lux);
@@ -2293,6 +2303,136 @@ for met_idx = 1:length(activity_metrics_to_plot)
         
     catch ME_5J
         warning('ErrGen:Fig5J','Error Fig 5J (%s): %s', current_metric_suffix, ME_5J.message); 
+    end
+
+    %% FIG 5K: Transition Masking Analysis (Dawn & Dusk) by Sex
+    % Purpose: Direct paired comparison of 300Lux vs 1000Lux within 
+    % Dawn (ZT 22-2) and Dusk (ZT 10-14) transition windows.
+    disp('--- Starting Figure 5K: Transition Masking Analysis ---');
+    try
+        hFig5K_current = figure('Name', sprintf('Fig 5K: Transition Masking (%s)', current_metric_suffix), 'Visible', 'off', 'Color', 'w', 'Position', [100, 100, 1000, 600]);
+        ax5K = axes('Parent', hFig5K_current); hold(ax5K, 'on');
+        
+        % Config
+        conds_to_compare = {'300Lux', '1000Lux'};
+        sexes_5K = {'Male', 'Female'};
+        
+        plotTable_5K = table();
+        
+        % --- 1. Data Collection Loop ---
+        for i_c = 1:length(conds_to_compare)
+            cond_name = conds_to_compare{i_c};
+            
+            for i_s = 1:length(sexes_5K)
+                sex_name = sexes_5K{i_s};
+                if strcmp(sex_name, 'Male'), current_animals = maleAnimals; else, current_animals = femaleAnimals; end
+                
+                % Use animals that have data for BOTH conditions (intersection with allAnimals)
+                target_animals = intersect(current_animals, allAnimals);
+                
+                for i_an = 1:length(target_animals)
+                    an_id = target_animals(i_an);
+                    an_data = dataTable(dataTable.Animal == an_id & dataTable.Condition == cond_name, :);
+                    if isempty(an_data), continue; end
+                    
+                    % --- Calculate Dusk Transition (ZT 10-14) ---
+                    idx_dusk = an_data.(ztHourVar) >= 10 & an_data.(ztHourVar) <= 14;
+                    val_dusk = mean(an_data.(current_metric_var)(idx_dusk), 'omitnan');
+                    
+                    % --- Calculate Dawn Transition (ZT 22-2) [WRAP AROUND] ---
+                    idx_dawn = an_data.(ztHourVar) >= 22 | an_data.(ztHourVar) <= 2;
+                    val_dawn = mean(an_data.(current_metric_var)(idx_dawn), 'omitnan');
+                    
+                    % Append rows (using string casting for safety)
+                    row_dusk = table(string(an_id), string(sex_name), string(cond_name), string('DuskTrans'), val_dusk, ...
+                        'VariableNames', {'Animal', 'Sex', 'Condition', 'Phase', 'Value'});
+                    row_dawn = table(string(an_id), string(sex_name), string(cond_name), string('DawnTrans'), val_dawn, ...
+                        'VariableNames', {'Animal', 'Sex', 'Condition', 'Phase', 'Value'});
+                        
+                    plotTable_5K = [plotTable_5K; row_dusk; row_dawn];
+                end
+            end
+        end
+        
+        % --- 2. Plotting Setup ---
+        % Define Order: Male Dusk -> Male Dawn -> Female Dusk -> Female Dawn
+        grp_order_5K = { ...
+            'Male-DuskTrans-300Lux', 'Male-DuskTrans-1000Lux', ...
+            'Male-DawnTrans-300Lux', 'Male-DawnTrans-1000Lux', ...
+            'Female-DuskTrans-300Lux', 'Female-DuskTrans-1000Lux', ...
+            'Female-DawnTrans-300Lux', 'Female-DawnTrans-1000Lux'};
+            
+        % Create composite group variable
+        plotTable_5K.Group = categorical(strcat(plotTable_5K.Sex, '-', plotTable_5K.Phase, '-', plotTable_5K.Condition));
+        
+        % Draw Violins
+        violinplot(plotTable_5K.Value, plotTable_5K.Group, 'Parent', ax5K, 'GroupOrder', grp_order_5K, 'ShowData', false, 'ViolinColor', grayColor);
+        
+        % Scatter Overlay (Explicit Colors)
+        jitterAmount = 0.15;
+        for i_g = 1:length(grp_order_5K)
+            g_name = grp_order_5K{i_g};
+            g_data = plotTable_5K(plotTable_5K.Group == g_name, :);
+            
+            if ~isempty(g_data)
+                x_scat = i_g + (rand(height(g_data),1)-0.5)*jitterAmount;
+                
+                % Assign Color
+                if contains(g_name, 'Male'), col = maleColor; else, col = femaleColor; end
+                
+                scatter(ax5K, x_scat, g_data.Value, 40, col, 'filled', 'MarkerFaceAlpha', 0.9);
+            end
+        end
+        
+        % --- 3. Stats: Paired T-Tests (300 vs 1000 within Phase/Sex) ---
+        fprintf('\n--- STATS: Figure 5K (Transition Masking: 300 vs 1000) ---\n');
+        y_lims = ylim(ax5K); y_range = diff(y_lims);
+        y_pos_bar = y_lims(2) + 0.05*y_range;
+        
+        alpha_5K = 0.05;
+        
+        % Pivot data wide
+        piv_5K = unstack(plotTable_5K, 'Value', 'Condition', 'GroupingVariables', {'Animal', 'Sex', 'Phase'});
+        
+        % Loop through the 4 comparisons
+        comparisons = {
+            'Male', 'DuskTrans';
+            'Male', 'DawnTrans';
+            'Female', 'DuskTrans';
+            'Female', 'DawnTrans'};
+            
+        for i = 1:size(comparisons, 1)
+            curr_sex = comparisons{i,1}; curr_phase = comparisons{i,2};
+            
+            d_sub = piv_5K(strcmp(piv_5K.Sex, curr_sex) & strcmp(piv_5K.Phase, curr_phase), :);
+            
+            if height(d_sub) >= 3 && all(ismember({'x300Lux', 'x1000Lux'}, d_sub.Properties.VariableNames))
+                 [~, p] = ttest(d_sub.x300Lux, d_sub.x1000Lux);
+                 fprintf('Paired T-Test | %s %s (300 vs 1000): p = %.4f (N=%d)\n', curr_sex, curr_phase, p, height(d_sub));
+                 
+                 if p < alpha_5K
+                    g1 = [curr_sex, '-', curr_phase, '-300Lux'];
+                    g2 = [curr_sex, '-', curr_phase, '-1000Lux'];
+                    x1 = find(strcmp(grp_order_5K, g1));
+                    x2 = find(strcmp(grp_order_5K, g2));
+                    plot_sig_bar(ax5K, [x1, x2], p, y_pos_bar, alpha_5K);
+                 end
+            end
+        end
+        
+        % Formatting
+        ylim(ax5K, [y_lims(1), y_pos_bar + 0.15*y_range]); 
+        ylabel(ax5K, ['Mean ', current_metric_ylabel]);
+        title(ax5K, sprintf('Transition Masking (Dusk 10-14, Dawn 22-2) (%s)', strrep(current_metric_suffix,'_',' ')));
+        xtickangle(ax5K, 45);
+        set(ax5K, 'Position', [0.1 0.25 0.88 0.65]);
+        grid(ax5K, 'on');
+        
+        fig_filename = fullfile(savePath_Fig5, sprintf('Figure5K_TransitionMasking_%s.png', current_metric_suffix));
+        exportgraphics(hFig5K_current, fig_filename); disp(['Saved: ', fig_filename]); close(hFig5K_current);
+        
+    catch ME_5K
+        warning('ErrGen:Fig5K','Error Fig 5K (%s): %s', current_metric_suffix, ME_5K.message); 
     end
 end
 disp('=====================================================');
