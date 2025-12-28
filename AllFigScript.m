@@ -531,9 +531,8 @@ for met_idx = 1:length(activity_metrics_to_plot)
         exportgraphics(hFig4A_Subplots, fig_filename); disp(['Saved: ', fig_filename]); close(hFig4A_Subplots);
     catch ME_4A, warning('ErrGen:Fig4A','Error Fig 4A (%s): %s', current_metric_suffix, ME_4A.message); end
     
-    %% FIG 4B: Overlay Activity Profiles with Difference Line (WITH STATS & ASTERISKS) - FINAL N=12 FIX
-    disp('--- Starting Figure 4B: Overlay Profiles ---');
-    fprintf('\n--- STATS: Figure 4B (300Lux vs 1000Lux Hourly) for %s ---\n', current_metric_var);
+    %% FIG 4B: Overlay Activity Profiles with Difference Line (N=12, SEM Shading)
+    disp('--- Starting Figure 4B: Overlay Profiles (SEM) ---');
     try
         hFig4B_OverlayDiff = figure('Name', sprintf('Fig 4B: Overlay Profiles & Difference (%s)', current_metric_suffix), 'Visible', 'off', 'Color', 'w');
         ax4B = axes('Parent', hFig4B_OverlayDiff); hold(ax4B, 'on');
@@ -541,26 +540,32 @@ for met_idx = 1:length(activity_metrics_to_plot)
         lineColors = {[0 0.4470 0.7410], [0.8500 0.3250 0.0980], [0.4660 0.6740 0.1880]};
         mean_profiles = table();
         
-        % 1. Calculate and Plot Lines (Population Visualization)
+        % 1. Calculate and Plot Lines
         for i_cond = 1:length(conditions_Fig4B)
             animals_for_cond = allAnimals; 
             if strcmp(conditions_Fig4B{i_cond},'FullDark'), animals_for_cond=fourCondAnimals; end
             
             data_this_cond = dataTable(ismember(dataTable.Animal, animals_for_cond) & dataTable.Condition == conditions_Fig4B{i_cond}, :);
             hourly_stats = groupsummary(data_this_cond, ztHourVar, {'mean','std','nnz'}, current_metric_var);
-            mean_prof = NaN(hoursPerDay,1); sem_prof = NaN(hoursPerDay,1);
             
+            mean_prof = NaN(hoursPerDay,1); sem_prof = NaN(hoursPerDay,1);
             [lia,locb] = ismember((0:23)', hourly_stats.(ztHourVar));
             mean_prof(lia) = hourly_stats.(['mean_',current_metric_var])(locb(lia));
-            sem_val = hourly_stats.(['std_',current_metric_var])(locb(lia)) ./ sqrt(hourly_stats.(['nnz_',current_metric_var])(locb(lia)));
-            sem_val(hourly_stats.(['nnz_',current_metric_var])(locb(lia)) <=1) = NaN; sem_prof(lia) = sem_val;
+            
+            % SEM Calculation
+            sd_val = hourly_stats.(['std_',current_metric_var])(locb(lia));
+            n_val  = hourly_stats.(['nnz_',current_metric_var])(locb(lia));
+            sem_val = sd_val ./ sqrt(n_val); sem_val(n_val <= 1) = NaN; 
+            sem_prof(lia) = sem_val;
             
             mean_profiles.(conditions_Fig4B{i_cond}) = mean_prof;
+            
             plot(ax4B, (0:23)', mean_prof, 'Color', lineColors{i_cond}, 'LineWidth', 2, 'DisplayName', conditions_Fig4B{i_cond});
-            fill(ax4B, [(0:23)'; flipud((0:23)')], [mean_prof-sem_prof; flipud(mean_prof+sem_prof)], lineColors{i_cond}, 'FaceAlpha', 0.15, 'EdgeColor', 'none', 'HandleVisibility', 'off');
+            fill(ax4B, [(0:23)'; flipud((0:23)')], [mean_prof-sem_prof; flipud(mean_prof+sem_prof)], ...
+                lineColors{i_cond}, 'FaceAlpha', 0.2, 'EdgeColor', 'none', 'HandleVisibility', 'off');
         end
         
-        % 2. Plot Difference Line (Raw Difference)
+        % 2. Plot Difference Line
         diff_profile = mean_profiles.('1000Lux') - mean_profiles.('300Lux');
         plot(ax4B, (0:23)', diff_profile, 'k:', 'LineWidth', 1.5, 'DisplayName', 'Diff (1000L-300L)');
         
@@ -568,90 +573,53 @@ for met_idx = 1:length(activity_metrics_to_plot)
         p_values = ones(24, 1);
         stats_animals = allAnimals; 
         
-        % Pre-calculate Animal Means Matrix: [Rows=Animals, Cols=24 Hours]
+        fprintf('\n--- STATS: Figure 4B (300Lux vs 1000Lux) ---\n');
+        fprintf('   Calculating statistics on N=%d animals (Paired T-Test)...\n', length(stats_animals));
+        
         prof_300_N12 = NaN(length(stats_animals), 24);
         prof_1000_N12 = NaN(length(stats_animals), 24);
         
         for i = 1:length(stats_animals)
-            % 300 Lux
-            an_data_300 = dataTable(dataTable.Animal == stats_animals(i) & dataTable.Condition == '300Lux', :);
-            if ~isempty(an_data_300)
-                h_means = groupsummary(an_data_300, ztHourVar, 'mean', current_metric_var);
-                [lia, locb] = ismember(0:23, h_means.(ztHourVar));
-                prof_300_N12(i, lia) = h_means.(['mean_', current_metric_var])(locb(lia));
-            end
-            
-            % 1000 Lux
-            an_data_1000 = dataTable(dataTable.Animal == stats_animals(i) & dataTable.Condition == '1000Lux', :);
-            if ~isempty(an_data_1000)
-                h_means = groupsummary(an_data_1000, ztHourVar, 'mean', current_metric_var);
-                [lia, locb] = ismember(0:23, h_means.(ztHourVar));
-                prof_1000_N12(i, lia) = h_means.(['mean_', current_metric_var])(locb(lia));
-            end
+            d3 = dataTable(dataTable.Animal == stats_animals(i) & dataTable.Condition == '300Lux', :);
+            if ~isempty(d3), h=groupsummary(d3,ztHourVar,'mean',current_metric_var); [~,l]=ismember(0:23,h.(ztHourVar)); prof_300_N12(i,l>0)=h.(['mean_',current_metric_var])(l(l>0)); end
+            d1 = dataTable(dataTable.Animal == stats_animals(i) & dataTable.Condition == '1000Lux', :);
+            if ~isempty(d1), h=groupsummary(d1,ztHourVar,'mean',current_metric_var); [~,l]=ismember(0:23,h.(ztHourVar)); prof_1000_N12(i,l>0)=h.(['mean_',current_metric_var])(l(l>0)); end
         end
         
-        % Run Paired T-Test for each Hour Column (N=12 pairs)
         for zt = 1:24
-            data_300 = prof_300_N12(:, zt);
-            data_1000 = prof_1000_N12(:, zt);
-            
-            % Remove any NaNs (only if an animal is completely missing data for that hour)
-            valid_idx = ~isnan(data_300) & ~isnan(data_1000);
-            
-            if sum(valid_idx) >= 3
-                [~, p] = ttest(data_300(valid_idx), data_1000(valid_idx));
-                p_values(zt) = p;
-            end
+            v3=prof_300_N12(:,zt); v1=prof_1000_N12(:,zt); idx=~isnan(v3)&~isnan(v1);
+            if sum(idx)>=3, [~,p]=ttest(v3(idx),v1(idx)); p_values(zt)=p; end
         end
         
         % 4. PLOT ASTERISKS
-        alpha_4B = 0.05; 
-        sig_indices = find(p_values < alpha_4B);
-        
-        current_ylim = ylim(ax4B); % Get limits before adding asterisks
+        alpha_4B = 0.05; sig_indices = find(p_values < alpha_4B);
+        current_ylim = ylim(ax4B); 
         
         if ~isempty(sig_indices)
             sig_zt = sig_indices - 1;
+            fprintf('   Significant Differences (p<0.05) found at ZT: %s\n', num2str(sig_zt'));
             y_asterisks = NaN(size(sig_zt));
-            
-            % Get mean lines for placement
-            prof_300_mean = mean_profiles.('300Lux');
-            prof_1000_mean = mean_profiles.('1000Lux');
-            
             for k = 1:length(sig_zt)
                 idx = sig_indices(k);
-                % Place asterisk above the higher of the two mean lines
-                max_val = max(prof_300_mean(idx), prof_1000_mean(idx));
-                y_buffer = (current_ylim(2) - current_ylim(1)) * 0.05;
-                y_asterisks(k) = max_val + y_buffer;
+                y_asterisks(k) = max(mean_profiles.('300Lux')(idx), mean_profiles.('1000Lux')(idx)) + (current_ylim(2)-current_ylim(1))*0.05;
             end
-            
             plot(ax4B, sig_zt, y_asterisks, '*', 'Color', 'k', 'MarkerSize', 6, 'HandleVisibility', 'off');
-            
-            % Adjust Y-limits if asterisks go off screen
-            max_ast_y = max(y_asterisks);
-            if max_ast_y > current_ylim(2)
-                ylim(ax4B, [current_ylim(1), max_ast_y + (current_ylim(2)-current_ylim(1))*0.05]);
-            end
-            
-            fprintf('Significant differences (p < %.4f) at ZT: %s\n', alpha_4B, num2str(sig_zt'));
+            if max(y_asterisks) > current_ylim(2), ylim(ax4B, [current_ylim(1), max(y_asterisks)*1.05]); end
         else
-            fprintf('No significant hourly differences found (N=12).\n');
+            fprintf('   No significant hourly differences found.\n');
         end
         
-        % 5. SHADING (Last to ensure full height)
+        % 5. SHADING (Last)
         final_ylim = ylim(ax4B);
-        patch(ax4B, ...
-            [ztLightsOffStart, ztLightsOffEnd+1, ztLightsOffEnd+1, ztLightsOffStart], ...
+        patch(ax4B, [ztLightsOffStart, ztLightsOffEnd+1, ztLightsOffEnd+1, ztLightsOffStart], ...
             [final_ylim(1) final_ylim(1) final_ylim(2) final_ylim(2)], ...
-            [0.85 0.85 0.85],'FaceAlpha',0.2,'EdgeColor','none', 'HandleVisibility', 'off');
+            [0.9 0.9 0.9],'FaceAlpha',0.2,'EdgeColor','none', 'HandleVisibility', 'off');
         
         title(ax4B, sprintf('Fig 4B: Activity Profiles & Difference (%s)', current_metric_suffix));
         xlabel(ax4B, 'ZT Hour'); ylabel(ax4B, current_metric_ylabel);
         xticks(ax4B, 0:6:23); xlim(ax4B, [-0.5 23.5]); grid(ax4B, 'on'); legend(ax4B, 'Location', 'northeast');
         set(ax4B, 'Position', [0.13 0.11 0.775 0.815]);
-        fig_filename = fullfile(savePath_Fig4, sprintf('Figure4B_OverlayAndDiff_%s.png', current_metric_suffix));
-        exportgraphics(hFig4B_OverlayDiff, fig_filename); disp(['Saved: ', fig_filename]); close(hFig4B_OverlayDiff);
+        exportgraphics(hFig4B_OverlayDiff, fullfile(savePath_Fig4, sprintf('Figure4B_OverlayAndDiff_%s.png', current_metric_suffix))); close(hFig4B_OverlayDiff);
     catch ME_4B, warning('ErrGen:Fig4B','Error Fig 4B (%s): %s', current_metric_suffix, ME_4B.message); end
     
 %% FIG 4C: Quantification of Diurnality (Violins)
@@ -1253,139 +1221,102 @@ for met_idx = 1:length(activity_metrics_to_plot)
     sex_groups = {maleAnimals, femaleAnimals};
     sex_labels = {'Male', 'Female'};
     
-    %% FIG 5A: Sex differences in 24h profiles (INDIVIDUAL TRACES + SD SHADING) - N=6 FIX
+    %% FIG 5A: Sex differences in 24h profiles (INDIVIDUAL TRACES + SEM SHADING + LINKED AXES)
     disp('--- Starting Figure 5A: Sex Profiles with Individual Traces ---');
     conditionsFor5A = {'300Lux', '1000Lux', 'FullDark'};
     condColors_5A = {[0 0.4470 0.7410], [0.8500 0.3250 0.0980], [0.4660 0.6740 0.1880]};
     
+    % --- PRE-CALCULATE GLOBAL Y-LIMITS ---
+    global_y_max = -inf; global_y_min = inf;
+    for i_s = 1:2
+        for i_c = 1:3
+            a_list = sex_groups{i_s}; 
+            if strcmp(conditionsFor5A{i_c},'FullDark'), a_list = intersect(a_list, fourCondAnimals); end
+            d_sub = dataTable(ismember(dataTable.Animal, a_list) & dataTable.Condition == conditionsFor5A{i_c}, :);
+            if isempty(d_sub), continue; end
+            h_st = groupsummary(d_sub, ztHourVar, {'mean','std','nnz'}, current_metric_var);
+            mn = h_st.(['mean_',current_metric_var]);
+            se = h_st.(['std_',current_metric_var]) ./ sqrt(h_st.(['nnz_',current_metric_var]));
+            global_y_max = max(global_y_max, max(mn + se));
+            global_y_min = min(global_y_min, min(mn - se));
+        end
+    end
+    y_range_glob = global_y_max - global_y_min;
+    global_ylim = [min(0, global_y_min - 0.05*y_range_glob), global_y_max + 0.15*y_range_glob];
+    
     for sex_idx = 1:length(sex_groups)
         hFig5A_current = figure('Name', sprintf('Figure 5A: %s Profiles (%s)', sex_labels{sex_idx}, current_metric_suffix), 'Visible', 'off', 'Color', 'w');
         ax5A = axes('Parent', hFig5A_current); hold(ax5A, 'on');
-        
         prof_300 = []; prof_1000 = []; 
         
-        % --- PLOTTING LOOP ---
         for i_cond = 1:length(conditionsFor5A)
             animals_for_cond = sex_groups{sex_idx};
-            % Filter for FullDark subset only when plotting FullDark
-            if strcmp(conditionsFor5A{i_cond}, 'FullDark') 
-                animals_for_cond = intersect(animals_for_cond, fourCondAnimals); 
-            end
-            
+            if strcmp(conditionsFor5A{i_cond}, 'FullDark'), animals_for_cond = intersect(animals_for_cond, fourCondAnimals); end
             sexCondData = dataTable(ismember(dataTable.Animal, animals_for_cond) & dataTable.Condition == conditionsFor5A{i_cond}, :);
             if isempty(sexCondData), continue; end
             
-            % 1. Plot Individual Traces
+            % 1. Individual Traces
             unique_ans = unique(sexCondData.Animal);
             for ia = 1:length(unique_ans)
                 an_d = sexCondData(sexCondData.Animal == unique_ans(ia), :);
-                an_hourly = groupsummary(an_d, ztHourVar, 'mean', current_metric_var);
-                an_hourly = sortrows(an_hourly, ztHourVar);
-                plot(ax5A, an_hourly.(ztHourVar), an_hourly.(['mean_', current_metric_var]), ...
-                    'Color', [condColors_5A{i_cond}, 0.15], 'LineWidth', 0.5, 'HandleVisibility', 'off');
+                an_hourly = groupsummary(an_d, ztHourVar, 'mean', current_metric_var); an_hourly = sortrows(an_hourly, ztHourVar);
+                plot(ax5A, an_hourly.(ztHourVar), an_hourly.(['mean_', current_metric_var]), 'Color', [condColors_5A{i_cond}, 0.15], 'LineWidth', 0.5, 'HandleVisibility', 'off');
             end
-            
-            % 2. Calculate Group Stats
+            % 2. Group Stats (SEM)
             hourlyStats = groupsummary(sexCondData, ztHourVar, {'mean','std','nnz'}, current_metric_var);
-            meanProfile = NaN(hoursPerDay,1); 
-            sdProfile = NaN(hoursPerDay,1); 
-            
+            meanProfile = NaN(hoursPerDay,1); semProfile = NaN(hoursPerDay,1);
             [lia,locb] = ismember((0:23)',hourlyStats.(ztHourVar));
             meanProfile(lia) = hourlyStats.(['mean_',current_metric_var])(locb(lia));
-            sdProfile(lia) = hourlyStats.(['std_',current_metric_var])(locb(lia)); 
-            
-            % Save profiles for asterisk plotting placement
+            semProfile(lia) = hourlyStats.(['std_',current_metric_var])(locb(lia)) ./ sqrt(hourlyStats.(['nnz_',current_metric_var])(locb(lia)));
             if strcmp(conditionsFor5A{i_cond}, '300Lux'), prof_300 = meanProfile; end
             if strcmp(conditionsFor5A{i_cond}, '1000Lux'), prof_1000 = meanProfile; end
             
-            % 3. Plot Mean Line
             plot(ax5A, (0:23)', meanProfile, 'LineWidth', 2, 'DisplayName', conditionsFor5A{i_cond}, 'Color', condColors_5A{i_cond});
-            
-            % 4. Plot Shading (Mean +/- SD)
-            fill(ax5A, [(0:23)'; flipud((0:23)')], [meanProfile-sdProfile; flipud(meanProfile+sdProfile)], ...
-                condColors_5A{i_cond}, 'FaceAlpha', 0.15, 'EdgeColor', 'none', 'HandleVisibility', 'off');
+            fill(ax5A, [(0:23)'; flipud((0:23)')], [meanProfile-semProfile; flipud(meanProfile+semProfile)], condColors_5A{i_cond}, 'FaceAlpha', 0.2, 'EdgeColor', 'none', 'HandleVisibility', 'off');
         end
         
-        if strcmp(current_metric_var, 'NormalizedActivity'), ylim(ax5A, [-1.5, 3]); end 
-        
-        % --- HOURLY STATS (300 vs 1000) using ANIMAL MEANS (N=6) ---
-        p_values = ones(24, 1);
-        stats_animals = sex_groups{sex_idx}; 
-        
-        % Pre-calculate Animal Means Matrix: [Rows=Animals, Cols=24 Hours]
-        prof_300_sex = NaN(length(stats_animals), 24);
-        prof_1000_sex = NaN(length(stats_animals), 24);
-        
-        for i = 1:length(stats_animals)
-            % 300 Lux
-            an_data_300 = dataTable(dataTable.Animal == stats_animals(i) & dataTable.Condition == '300Lux', :);
-            if ~isempty(an_data_300)
-                h_means = groupsummary(an_data_300, ztHourVar, 'mean', current_metric_var);
-                [lia, locb] = ismember(0:23, h_means.(ztHourVar));
-                prof_300_sex(i, lia) = h_means.(['mean_', current_metric_var])(locb(lia));
-            end
-            
-            % 1000 Lux
-            an_data_1000 = dataTable(dataTable.Animal == stats_animals(i) & dataTable.Condition == '1000Lux', :);
-            if ~isempty(an_data_1000)
-                h_means = groupsummary(an_data_1000, ztHourVar, 'mean', current_metric_var);
-                [lia, locb] = ismember(0:23, h_means.(ztHourVar));
-                prof_1000_sex(i, lia) = h_means.(['mean_', current_metric_var])(locb(lia));
-            end
-        end
-        
-        % Run Paired T-Test
-        for zt = 1:24
-            vec_300 = prof_300_sex(:, zt);
-            vec_1000 = prof_1000_sex(:, zt);
-            
-            valid_idx = ~isnan(vec_300) & ~isnan(vec_1000);
-            
-            if sum(valid_idx) >= 3
-                [~, p] = ttest(vec_300(valid_idx), vec_1000(valid_idx)); 
-                p_values(zt) = p;
-            end
-        end
-        
-        % --- PLOT ASTERISKS & ADJUST YLIM ---
-        alpha_5A = 0.05; 
-        sig_idx = find(p_values < alpha_5A);
-        
+        if strcmp(current_metric_var, 'NormalizedActivity'), ylim(ax5A, [-1.5, 3]); else, ylim(ax5A, global_ylim); end
         current_ylim = ylim(ax5A);
         
-        fprintf('--- STATS: Fig 5A (%s) 300Lux vs 1000Lux (N=%d) ---\n', sex_labels{sex_idx}, length(stats_animals));
+        % --- STATS (N=6 Paired) ---
+        fprintf('--- STATS: Fig 5A (%s) 300Lux vs 1000Lux (N=%d) ---\n', sex_labels{sex_idx}, length(sex_groups{sex_idx}));
+        p_values = ones(24, 1);
+        stats_animals = sex_groups{sex_idx}; 
+        prof_300_sex = NaN(length(stats_animals), 24); prof_1000_sex = NaN(length(stats_animals), 24);
+        
+        for i = 1:length(stats_animals)
+            d3=dataTable(dataTable.Animal==stats_animals(i)&dataTable.Condition=='300Lux',:); 
+            if ~isempty(d3), h=groupsummary(d3,ztHourVar,'mean',current_metric_var); [~,l]=ismember(0:23,h.(ztHourVar)); prof_300_sex(i,l>0)=h.(['mean_',current_metric_var])(l(l>0)); end
+            d1=dataTable(dataTable.Animal==stats_animals(i)&dataTable.Condition=='1000Lux',:); 
+            if ~isempty(d1), h=groupsummary(d1,ztHourVar,'mean',current_metric_var); [~,l]=ismember(0:23,h.(ztHourVar)); prof_1000_sex(i,l>0)=h.(['mean_',current_metric_var])(l(l>0)); end
+        end
+        for zt = 1:24
+            v3=prof_300_sex(:,zt); v1=prof_1000_sex(:,zt); idx=~isnan(v3)&~isnan(v1);
+            if sum(idx)>=3, [~,p]=ttest(v3(idx),v1(idx)); p_values(zt)=p; end
+        end
+        
+        alpha_5A = 0.05; sig_idx = find(p_values < alpha_5A);
         if ~isempty(sig_idx)
             fprintf('    Significant Hours (p < %.2f): ZT %s\n', alpha_5A, num2str(sig_idx' - 1));
             zt_sig = sig_idx - 1;
-            if ~isempty(prof_300) && ~isempty(prof_1000)
-                y_pts = max([prof_300(sig_idx), prof_1000(sig_idx)], [], 2);
-                y_buff = (current_ylim(2)-current_ylim(1)) * 0.05;
-                plot(ax5A, zt_sig, y_pts + y_buff, '*', 'Color', 'k', 'MarkerSize', 5, 'HandleVisibility', 'off');
-                
-                % Expand Y limit
-                max_ast_y = max(y_pts + y_buff);
-                if max_ast_y > current_ylim(2)
-                    ylim(ax5A, [current_ylim(1), max_ast_y + (current_ylim(2)-current_ylim(1))*0.05]);
-                end
-            end
+            y_pts = max([prof_300(sig_idx), prof_1000(sig_idx)], [], 2);
+            y_buff = (current_ylim(2)-current_ylim(1)) * 0.05;
+            plot(ax5A, zt_sig, y_pts + y_buff, '*', 'Color', 'k', 'MarkerSize', 5, 'HandleVisibility', 'off');
+            if max(y_pts+y_buff) > current_ylim(2), ylim(ax5A, [current_ylim(1), max(y_pts+y_buff)+y_buff]); end
         else
             fprintf('    No significant hours found.\n');
         end
         
-        % --- DRAW SHADING (Last step) ---
         final_ylim = ylim(ax5A);
-        patch(ax5A, ...
-            [ztLightsOffStart, ztLightsOffEnd+1, ztLightsOffEnd+1, ztLightsOffStart], ...
+        patch(ax5A, [ztLightsOffStart, ztLightsOffEnd+1, ztLightsOffEnd+1, ztLightsOffStart], ...
             [final_ylim(1) final_ylim(1) final_ylim(2) final_ylim(2)], ...
-            [0.85 0.85 0.85],'FaceAlpha',0.2,'EdgeColor','none', 'HandleVisibility', 'off');
-        
-        title(ax5A,sprintf('Fig 5A: %s Profiles (%s) [Shading=SD]', sex_labels{sex_idx}, current_metric_suffix));
+            [0.9 0.9 0.9],'FaceAlpha',0.2,'EdgeColor','none', 'HandleVisibility', 'off');
+            
+        title(ax5A,sprintf('Fig 5A: %s Profiles (%s) [Shading=SEM]', sex_labels{sex_idx}, current_metric_suffix));
         xlabel(ax5A,'ZT Hour'); ylabel(ax5A,['Mean ', current_metric_ylabel]);
         xticks(ax5A,0:6:23); xlim(ax5A,[-0.5,23.5]); grid(ax5A,'on'); legend(ax5A, 'Location','northwest');
         set(ax5A, 'Position', [0.13 0.11 0.775 0.815]);
-        
-        fig_filename = fullfile(savePath_Fig5, sprintf('Figure5A_Profile_%s_%s_SD.png', sex_labels{sex_idx}, current_metric_suffix));
-        exportgraphics(hFig5A_current, fig_filename); disp(['Saved: ', fig_filename]); close(hFig5A_current);
+        exportgraphics(hFig5A_current, fullfile(savePath_Fig5, sprintf('Figure5A_Profile_%s_%s_SEM.png', sex_labels{sex_idx}, current_metric_suffix))); close(hFig5A_current);
     end
 
 %% FIG 5B: Diurnality Violins by Sex and Condition (12-Violin Plot) WITH DESCRIPTIVE STATS
@@ -1507,101 +1438,93 @@ for met_idx = 1:length(activity_metrics_to_plot)
         warning('ErrGen:Fig5B','Error Fig 5B (%s): %s', current_metric_suffix, ME_5B.message); 
     end
 
-    %% FIG 5C: Distribution Analysis (Mid-Phase Difference) - MID-PHASE & COLOR CORRECTED
-    disp('--- Starting Figure 5C: Distribution Analysis (Mid-Phase / Per-Animal) ---');
+    %% FIG 5C: HOURLY DIFFERENCE COMPARISON (Male Delta vs Female Delta)
+    disp('--- Starting Figure 5C: Hourly Difference Comparison (Male vs Female) ---');
     try
-        hFig5C_current = figure('Name', sprintf('Fig 5C: Distro Analysis (%s)', current_metric_suffix), 'Visible', 'off', 'Color', 'w');
-        ax5C = axes('Parent', hFig5C_current); hold(ax5C, 'on');
+        hFig5C_Diff = figure('Name', sprintf('Fig 5C: Hourly Diff M vs F (%s)', current_metric_suffix), 'Visible', 'off', 'Color', 'w', 'Position', [100, 100, 1200, 500]);
+        ax5C = axes('Parent', hFig5C_Diff); hold(ax5C, 'on');
         
-        % 1. Calculate Differences (1000Lux - 300Lux) [Rows=Animals, Cols=24 Hours]
-        male_diffs = get_last_2_weeks_profile(dataTable, maleAnimals, '1000Lux', ztHourVar, current_metric_var) - ...
-                     get_last_2_weeks_profile(dataTable, maleAnimals, '300Lux', ztHourVar, current_metric_var);
-        
-        female_diffs = get_last_2_weeks_profile(dataTable, femaleAnimals, '1000Lux', ztHourVar, current_metric_var) - ...
-                       get_last_2_weeks_profile(dataTable, femaleAnimals, '300Lux', ztHourVar, current_metric_var);
-        
-        % 2. Average into Mid-Phase bins PER ANIMAL
-        % Mid-Light: ZT 3-9.  Indices: ZT0=1 -> ZT3=4, ZT9=10. Range: 4:10.
-        % Mid-Dark:  ZT 15-21. Indices: ZT0=1 -> ZT15=16, ZT21=22. Range: 16:22.
-        
-        m_midlight_means = mean(male_diffs(:, 4:10), 2, 'omitnan');
-        m_middark_means  = mean(male_diffs(:, 16:22), 2, 'omitnan');
-        f_midlight_means = mean(female_diffs(:, 4:10), 2, 'omitnan');
-        f_middark_means  = mean(female_diffs(:, 16:22), 2, 'omitnan');
-        
-        % Remove NaNs
-        m_midlight_means(isnan(m_midlight_means)) = []; f_midlight_means(isnan(f_midlight_means)) = [];
-        m_middark_means(isnan(m_middark_means)) = [];   f_middark_means(isnan(f_middark_means)) = [];
-        
-        fprintf('\n--- STATS: Figure 5C (Distribution Comparisons - Mid-Phase) ---\n');
-        
-        % --- STATS CALCULATIONS ---
-        
-        % 1. Mid-Light (ZT 3-9)
-        fprintf('>>> MID-LIGHT (ZT 3-9) Mean Difference Analysis <<<\n');
-        [h_m, p_m_norm] = kstest((m_midlight_means - mean(m_midlight_means)) / std(m_midlight_means)); 
-        [h_f, p_f_norm] = kstest((f_midlight_means - mean(f_midlight_means)) / std(f_midlight_means));
-        
-        if p_m_norm > 0.05 && p_f_norm > 0.05
-            [~, p_ml] = ttest2(m_midlight_means, f_midlight_means);
-            fprintf('Male MID-LIGHT is Normal with a p-value = %.4f\n', p_m_norm);
-            fprintf('Female MID-LIGHT is Normal with a p-value = %.4f\n', p_f_norm);
-        else
-            p_ml = ranksum(m_midlight_means, f_midlight_means);
-            fprintf('Male MID-LIGHT is NOT Normal with a p-value = %.4f\n', p_m_norm);
-            fprintf('Female MID-LIGHT is NOT Normal with a p-value = %.4f\n', p_f_norm);
+        % 1. Calculate Hourly Deltas
+        sex_deltas = struct(); sex_deltas.Male = []; sex_deltas.Female = [];
+        for i_sex = 1:2
+            curr_group = sex_groups{i_sex}; sex_name = sex_labels{i_sex};
+            group_delta_mat = NaN(length(curr_group), 24);
+            for i_an = 1:length(curr_group)
+                an_id = curr_group(i_an);
+                d3=dataTable(dataTable.Animal==an_id&dataTable.Condition=='300Lux',:); h3=groupsummary(d3,ztHourVar,'mean',current_metric_var);
+                d1=dataTable(dataTable.Animal==an_id&dataTable.Condition=='1000Lux',:); h1=groupsummary(d1,ztHourVar,'mean',current_metric_var);
+                v3=NaN(1,24); v1=NaN(1,24);
+                [~,l3]=ismember(0:23,h3.(ztHourVar)); v3(l3>0)=h3.(['mean_',current_metric_var])(l3(l3>0));
+                [~,l1]=ismember(0:23,h1.(ztHourVar)); v1(l1>0)=h1.(['mean_',current_metric_var])(l1(l1>0));
+                group_delta_mat(i_an, :) = v1 - v3;
+            end
+            sex_deltas.(sex_name) = group_delta_mat;
         end
-        fprintf('  Result (M vs F MidLight): p = %.4f\n', p_ml);
         
-        % 2. Mid-Dark (ZT 15-21)
-        fprintf('>>> MID-DARK (ZT 15-21) Mean Difference Analysis <<<\n');
-        [h_m, p_m_norm] = kstest((m_middark_means - mean(m_middark_means)) / std(m_middark_means));
-        [h_f, p_f_norm] = kstest((f_middark_means - mean(f_middark_means)) / std(f_middark_means));
+        % 2. Means & SEMs
+        male_mean = mean(sex_deltas.Male, 1, 'omitnan'); male_sem = std(sex_deltas.Male, 0, 1, 'omitnan') ./ sqrt(sum(~isnan(sex_deltas.Male)));
+        fem_mean = mean(sex_deltas.Female, 1, 'omitnan'); fem_sem = std(sex_deltas.Female, 0, 1, 'omitnan') ./ sqrt(sum(~isnan(sex_deltas.Female)));
         
-        if p_m_norm > 0.05 && p_f_norm > 0.05
-            [~, p_md] = ttest2(m_middark_means, f_middark_means);
-        else
-            p_md = ranksum(m_middark_means, f_middark_means);
+        % 3. Plot
+        b = bar(ax5C, 0:23, [male_mean', fem_mean'], 'grouped');
+        b(1).FaceColor = maleColor; b(1).EdgeColor = 'none'; b(2).FaceColor = femaleColor; b(2).EdgeColor = 'none';
+        x_offset = [b(1).XEndPoints; b(2).XEndPoints];
+        errorbar(ax5C, x_offset(1,:), male_mean, male_sem, 'k.', 'LineWidth', 1);
+        errorbar(ax5C, x_offset(2,:), fem_mean, fem_sem, 'k.', 'LineWidth', 1);
+        
+        % 4. STATS with Verbose Output (KS Values Included)
+        fprintf('\n--- STATS: Figure 5C (Male Delta vs Female Delta) ---\n');
+        fprintf('   Comparing N=%d Males vs N=%d Females\n', size(sex_deltas.Male,1), size(sex_deltas.Female,1));
+        p_vals_5C = ones(1, 24); sig_found = false;
+        
+        for zt = 1:24
+            m_vals = sex_deltas.Male(:, zt); m_vals(isnan(m_vals))=[];
+            f_vals = sex_deltas.Female(:, zt); f_vals(isnan(f_vals))=[];
+            if length(m_vals)>=3 && length(f_vals)>=3
+                % KS Normality Test (Normalize data first for valid KS test on small samples)
+                if std(m_vals) > 0, [~, p_ks_m] = kstest((m_vals-mean(m_vals))/std(m_vals)); else, p_ks_m = 1; end
+                if std(f_vals) > 0, [~, p_ks_f] = kstest((f_vals-mean(f_vals))/std(f_vals)); else, p_ks_f = 1; end
+                
+                % Print KS results for checking
+                % fprintf('   ZT %d Normality: Male p=%.3f, Female p=%.3f -> ', zt-1, p_ks_m, p_ks_f);
+                
+                if p_ks_m > 0.05 && p_ks_f > 0.05
+                    [~, p] = ttest2(m_vals, f_vals); test_type = 'T-Test';
+                    % fprintf('Using T-Test\n');
+                else
+                    p = ranksum(m_vals, f_vals); test_type = 'RankSum';
+                    % fprintf('Using RankSum\n');
+                end
+                p_vals_5C(zt) = p;
+                
+                % Report Significance
+                if p < 0.05
+                    fprintf('   ZT %d: SIGNIFICANT (%s) | p=%.4f (M:%.2f, F:%.2f) [KS: M=%.3f, F=%.3f]\n', ...
+                        zt-1, test_type, p, mean(m_vals), mean(f_vals), p_ks_m, p_ks_f);
+                    sig_found = true;
+                end
+            end
         end
-        fprintf('  Result (M vs F MidDark): p = %.4f\n', p_md);
+        if ~sig_found, fprintf('   No significant hourly sex differences found.\n'); end
         
-        % --- PLOTTING (Violins with Specific Colors) ---
-        dist_data = [m_midlight_means; f_midlight_means; m_middark_means; f_middark_means];
-        dist_grp = [repmat({'Male-MidLight'},length(m_midlight_means),1); repmat({'Female-MidLight'},length(f_midlight_means),1); ...
-                    repmat({'Male-MidDark'},length(m_middark_means),1); repmat({'Female-MidDark'},length(f_middark_means),1)];
+        % 5. Asterisks
+        sig_idx = find(p_vals_5C < 0.05); y_limits = ylim(ax5C); y_max_plot = y_limits(2);
+        for k = 1:length(sig_idx)
+            zt_idx = sig_idx(k); h_star = max(male_mean(zt_idx)+male_sem(zt_idx), fem_mean(zt_idx)+fem_sem(zt_idx)) + 0.05*(y_limits(2)-y_limits(1));
+            y_max_plot = max(y_max_plot, h_star);
+            text(ax5C, zt_idx-1, h_star, '*', 'HorizontalAlignment', 'center', 'FontSize', 14, 'Color', 'k');
+        end
+        ylim(ax5C, [y_limits(1), y_max_plot + 0.1*(y_limits(2)-y_limits(1))]);
         
-        % Draw Violins (Gray background)
-        violinplot(dist_data, categorical(dist_grp), 'Parent', ax5C, ...
-            'GroupOrder', {'Male-MidLight','Female-MidLight','Male-MidDark','Female-MidDark'}, ...
-            'ViolinColor', grayColor, 'ShowData', false);
-        yline(ax5C, 0, 'k--');
-        
-        % Overlay Scatter Points Manually to Control Color
-        jitterAmount = 0.15;
-        groups = {'Male-MidLight', 'Female-MidLight', 'Male-MidDark', 'Female-MidDark'};
-        data_cells = {m_midlight_means, f_midlight_means, m_middark_means, f_middark_means};
-        
-        for i = 1:4
-            pts = data_cells{i};
-            x_pos = i + (rand(size(pts))-0.5)*jitterAmount;
+        % Shading
+        yl_fin = ylim(ax5C);
+        patch(ax5C, [ztLightsOffStart, ztLightsOffEnd+1, ztLightsOffEnd+1, ztLightsOffStart], ...
+            [yl_fin(1) yl_fin(1) yl_fin(2) yl_fin(2)], [0.5 0.5 0.5], 'FaceAlpha', 0.1, 'EdgeColor', 'none'); 
             
-            % Assign Color based on Group Name
-            if contains(groups{i}, 'Male'), col = maleColor; else, col = femaleColor; end
-            
-            scatter(ax5C, x_pos, pts, 40, col, 'filled', 'MarkerFaceAlpha', 0.9);
-        end
-        
-        % Sig Bars
-        y_max = max(dist_data); y_range = range(dist_data); if y_range==0, y_range=1; end
-        if p_ml < 0.05, plot_sig_bar(ax5C, [1, 2], p_ml, y_max + 0.1*y_range, 0.05); end
-        if p_md < 0.05, plot_sig_bar(ax5C, [3, 4], p_md, y_max + 0.1*y_range, 0.05); end
-        
-        title(ax5C, sprintf('Fig 5C: Activity Change (Mid-Phase) (%s)', current_metric_suffix));
-        ylabel(ax5C, 'Mean Change (1000L - 300L)');
-        xticklabels(ax5C, {'Male (Mid-L)','Fem (Mid-L)','Male (Mid-D)','Fem (Mid-D)'});
-        
-        fig_filename_5C = fullfile(savePath_Fig5, sprintf('Figure5C_DistributionStats_MidPhase_%s.png', current_metric_suffix));
-        exportgraphics(hFig5C_current, fig_filename_5C); close(hFig5C_current);
+        ylabel(ax5C, ['Mean Delta (1000L - 300L) ', current_metric_ylabel]); xlabel(ax5C, 'ZT Hour');
+        title(ax5C, sprintf('Fig 5C: Hourly Response Difference (Male vs Female) (%s)', current_metric_suffix));
+        legend(ax5C, {'Male \Delta', 'Female \Delta'}, 'Location', 'best'); xlim(ax5C, [-0.5 23.5]); xticks(ax5C, 0:23);
+        exportgraphics(hFig5C_Diff, fullfile(savePath_Fig5, sprintf('Figure5C_HourlyDiff_Bar_%s.png', current_metric_suffix))); close(hFig5C_Diff);
     catch ME_5C, warning('ErrGen:Fig5C','Error Fig 5C (%s): %s', current_metric_suffix, ME_5C.message); end
 
     %% FIG 5D: Daily Movement Across Conditions

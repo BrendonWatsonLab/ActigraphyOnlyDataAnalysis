@@ -531,9 +531,8 @@ for met_idx = 1:length(activity_metrics_to_plot)
         exportgraphics(hFig4A_Subplots, fig_filename); disp(['Saved: ', fig_filename]); close(hFig4A_Subplots);
     catch ME_4A, warning('ErrGen:Fig4A','Error Fig 4A (%s): %s', current_metric_suffix, ME_4A.message); end
     
-    %% FIG 4B: Overlay Activity Profiles with Difference Line (WITH STATS & ASTERISKS) - FINAL N=12 FIX
-    disp('--- Starting Figure 4B: Overlay Profiles ---');
-    fprintf('\n--- STATS: Figure 4B (300Lux vs 1000Lux Hourly) for %s ---\n', current_metric_var);
+    %% FIG 4B: Overlay Activity Profiles with Difference Line (N=12, SEM Shading)
+    disp('--- Starting Figure 4B: Overlay Profiles (SEM) ---');
     try
         hFig4B_OverlayDiff = figure('Name', sprintf('Fig 4B: Overlay Profiles & Difference (%s)', current_metric_suffix), 'Visible', 'off', 'Color', 'w');
         ax4B = axes('Parent', hFig4B_OverlayDiff); hold(ax4B, 'on');
@@ -548,16 +547,28 @@ for met_idx = 1:length(activity_metrics_to_plot)
             
             data_this_cond = dataTable(ismember(dataTable.Animal, animals_for_cond) & dataTable.Condition == conditions_Fig4B{i_cond}, :);
             hourly_stats = groupsummary(data_this_cond, ztHourVar, {'mean','std','nnz'}, current_metric_var);
-            mean_prof = NaN(hoursPerDay,1); sem_prof = NaN(hoursPerDay,1);
+            
+            mean_prof = NaN(hoursPerDay,1); 
+            sem_prof = NaN(hoursPerDay,1);
             
             [lia,locb] = ismember((0:23)', hourly_stats.(ztHourVar));
             mean_prof(lia) = hourly_stats.(['mean_',current_metric_var])(locb(lia));
-            sem_val = hourly_stats.(['std_',current_metric_var])(locb(lia)) ./ sqrt(hourly_stats.(['nnz_',current_metric_var])(locb(lia)));
-            sem_val(hourly_stats.(['nnz_',current_metric_var])(locb(lia)) <=1) = NaN; sem_prof(lia) = sem_val;
+            
+            % Calculate SEM: SD / sqrt(N)
+            sd_val = hourly_stats.(['std_',current_metric_var])(locb(lia));
+            n_val  = hourly_stats.(['nnz_',current_metric_var])(locb(lia));
+            sem_val = sd_val ./ sqrt(n_val);
+            sem_val(n_val <= 1) = NaN; 
+            sem_prof(lia) = sem_val;
             
             mean_profiles.(conditions_Fig4B{i_cond}) = mean_prof;
+            
+            % Plot Line
             plot(ax4B, (0:23)', mean_prof, 'Color', lineColors{i_cond}, 'LineWidth', 2, 'DisplayName', conditions_Fig4B{i_cond});
-            fill(ax4B, [(0:23)'; flipud((0:23)')], [mean_prof-sem_prof; flipud(mean_prof+sem_prof)], lineColors{i_cond}, 'FaceAlpha', 0.15, 'EdgeColor', 'none', 'HandleVisibility', 'off');
+            
+            % Plot SEM Shading
+            fill(ax4B, [(0:23)'; flipud((0:23)')], [mean_prof-sem_prof; flipud(mean_prof+sem_prof)], ...
+                lineColors{i_cond}, 'FaceAlpha', 0.2, 'EdgeColor', 'none', 'HandleVisibility', 'off');
         end
         
         % 2. Plot Difference Line (Raw Difference)
@@ -568,20 +579,16 @@ for met_idx = 1:length(activity_metrics_to_plot)
         p_values = ones(24, 1);
         stats_animals = allAnimals; 
         
-        % Pre-calculate Animal Means Matrix: [Rows=Animals, Cols=24 Hours]
         prof_300_N12 = NaN(length(stats_animals), 24);
         prof_1000_N12 = NaN(length(stats_animals), 24);
         
         for i = 1:length(stats_animals)
-            % 300 Lux
             an_data_300 = dataTable(dataTable.Animal == stats_animals(i) & dataTable.Condition == '300Lux', :);
             if ~isempty(an_data_300)
                 h_means = groupsummary(an_data_300, ztHourVar, 'mean', current_metric_var);
                 [lia, locb] = ismember(0:23, h_means.(ztHourVar));
                 prof_300_N12(i, lia) = h_means.(['mean_', current_metric_var])(locb(lia));
             end
-            
-            % 1000 Lux
             an_data_1000 = dataTable(dataTable.Animal == stats_animals(i) & dataTable.Condition == '1000Lux', :);
             if ~isempty(an_data_1000)
                 h_means = groupsummary(an_data_1000, ztHourVar, 'mean', current_metric_var);
@@ -590,16 +597,11 @@ for met_idx = 1:length(activity_metrics_to_plot)
             end
         end
         
-        % Run Paired T-Test for each Hour Column (N=12 pairs)
         for zt = 1:24
-            data_300 = prof_300_N12(:, zt);
-            data_1000 = prof_1000_N12(:, zt);
-            
-            % Remove any NaNs (only if an animal is completely missing data for that hour)
-            valid_idx = ~isnan(data_300) & ~isnan(data_1000);
-            
+            d300 = prof_300_N12(:, zt); d1000 = prof_1000_N12(:, zt);
+            valid_idx = ~isnan(d300) & ~isnan(d1000);
             if sum(valid_idx) >= 3
-                [~, p] = ttest(data_300(valid_idx), data_1000(valid_idx));
+                [~, p] = ttest(d300(valid_idx), d1000(valid_idx));
                 p_values(zt) = p;
             end
         end
@@ -607,44 +609,35 @@ for met_idx = 1:length(activity_metrics_to_plot)
         % 4. PLOT ASTERISKS
         alpha_4B = 0.05; 
         sig_indices = find(p_values < alpha_4B);
-        
-        current_ylim = ylim(ax4B); % Get limits before adding asterisks
+        current_ylim = ylim(ax4B); 
         
         if ~isempty(sig_indices)
             sig_zt = sig_indices - 1;
             y_asterisks = NaN(size(sig_zt));
-            
-            % Get mean lines for placement
             prof_300_mean = mean_profiles.('300Lux');
             prof_1000_mean = mean_profiles.('1000Lux');
             
             for k = 1:length(sig_zt)
                 idx = sig_indices(k);
-                % Place asterisk above the higher of the two mean lines
                 max_val = max(prof_300_mean(idx), prof_1000_mean(idx));
                 y_buffer = (current_ylim(2) - current_ylim(1)) * 0.05;
                 y_asterisks(k) = max_val + y_buffer;
             end
-            
             plot(ax4B, sig_zt, y_asterisks, '*', 'Color', 'k', 'MarkerSize', 6, 'HandleVisibility', 'off');
             
-            % Adjust Y-limits if asterisks go off screen
             max_ast_y = max(y_asterisks);
             if max_ast_y > current_ylim(2)
                 ylim(ax4B, [current_ylim(1), max_ast_y + (current_ylim(2)-current_ylim(1))*0.05]);
             end
-            
             fprintf('Significant differences (p < %.4f) at ZT: %s\n', alpha_4B, num2str(sig_zt'));
-        else
-            fprintf('No significant hourly differences found (N=12).\n');
         end
         
-        % 5. SHADING (Last to ensure full height)
+        % 5. SHADING (Last)
         final_ylim = ylim(ax4B);
         patch(ax4B, ...
             [ztLightsOffStart, ztLightsOffEnd+1, ztLightsOffEnd+1, ztLightsOffStart], ...
             [final_ylim(1) final_ylim(1) final_ylim(2) final_ylim(2)], ...
-            [0.85 0.85 0.85],'FaceAlpha',0.2,'EdgeColor','none', 'HandleVisibility', 'off');
+            [0.9 0.9 0.9],'FaceAlpha',0.2,'EdgeColor','none', 'HandleVisibility', 'off');
         
         title(ax4B, sprintf('Fig 4B: Activity Profiles & Difference (%s)', current_metric_suffix));
         xlabel(ax4B, 'ZT Hour'); ylabel(ax4B, current_metric_ylabel);
@@ -652,7 +645,7 @@ for met_idx = 1:length(activity_metrics_to_plot)
         set(ax4B, 'Position', [0.13 0.11 0.775 0.815]);
         fig_filename = fullfile(savePath_Fig4, sprintf('Figure4B_OverlayAndDiff_%s.png', current_metric_suffix));
         exportgraphics(hFig4B_OverlayDiff, fig_filename); disp(['Saved: ', fig_filename]); close(hFig4B_OverlayDiff);
-    catch ME_4B, warning('ErrGen:Fig4B','Error Fig 4B (%s): %s', current_metric_suffix, ME_4B.message); end
+     catch ME_4B, warning('ErrGen:Fig4B','Error Fig 4B (%s): %s', current_metric_suffix, ME_4B.message); end
     
 %% FIG 4C: Quantification of Diurnality (Violins)
     disp('--- Starting Figure 4C: Diurnality Violins ---');
@@ -1377,7 +1370,7 @@ for met_idx = 1:length(activity_metrics_to_plot)
         patch(ax5A, ...
             [ztLightsOffStart, ztLightsOffEnd+1, ztLightsOffEnd+1, ztLightsOffStart], ...
             [final_ylim(1) final_ylim(1) final_ylim(2) final_ylim(2)], ...
-            [0.9 0.9 0.9],'FaceAlpha',0.2,'EdgeColor','none', 'HandleVisibility', 'off');
+            [0.85 0.85 0.85],'FaceAlpha',0.2,'EdgeColor','none', 'HandleVisibility', 'off');
         
         title(ax5A,sprintf('Fig 5A: %s Profiles (%s) [Shading=SD]', sex_labels{sex_idx}, current_metric_suffix));
         xlabel(ax5A,'ZT Hour'); ylabel(ax5A,['Mean ', current_metric_ylabel]);
