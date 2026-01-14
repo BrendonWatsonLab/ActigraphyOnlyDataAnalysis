@@ -1527,8 +1527,161 @@ for met_idx = 1:length(activity_metrics_to_plot)
         exportgraphics(hFig5C_Diff, fullfile(savePath_Fig5, sprintf('Figure5C_HourlyDiff_Bar_%s.png', current_metric_suffix))); close(hFig5C_Diff);
     catch ME_5C, warning('ErrGen:Fig5C','Error Fig 5C (%s): %s', current_metric_suffix, ME_5C.message); end
 
-    %% FIG 5D: Daily Movement Across Conditions
-    disp('No longer displaying this one (5D)');
+    %% FIG 5D_Indiv: Individual Animal Activity Trails over Concatenated Conditions (PixelDiff Only)
+    % Purpose: Visualize individual variability over time across conditions, split by sex.
+    
+    if strcmp(current_metric_var, 'SelectedPixelDifference')
+        disp('--- Starting Figure 5D_Indiv: Individual Concatenated Time Trails (DEBUG & FIX) ---');
+        metric_to_plot = 'SelectedPixelDifference'; 
+        ylabel_str = 'Daily Total Pixel Difference';
+    
+        try
+            hFig5D_Indiv = figure('Name', 'Fig 5D_Indiv: Individual Concatenated Trails', ...
+                'Visible', 'off', 'Color', 'w', 'Position', [100, 100, 1000, 800]);
+            
+            conditions_ordered = {'300Lux', '1000Lux', 'FullDark', '300LuxEnd'};
+            sex_titles = {'Males', 'Females'};
+            
+            % Distinct colors
+            male_indiv_colors = parula(length(maleAnimals));
+            female_indiv_colors = autumn(length(femaleAnimals));
+            
+            % --- Pre-Calculation: Condition Durations ---
+            cond_durations = zeros(1, length(conditions_ordered));
+            fprintf('DEBUG: Calculating Condition Durations...\n');
+            
+            for c = 1:length(conditions_ordered)
+                % Filter by Condition
+                cond_idx = ismember(dataTable.Condition, conditions_ordered{c});
+                cond_data = dataTable(cond_idx, :);
+                
+                if isempty(cond_data)
+                    fprintf('   Warning: No data found for condition %s\n', conditions_ordered{c});
+                    continue; 
+                end
+                
+                % Create integer day locally for calculation
+                if ismember('RelativeDay', cond_data.Properties.VariableNames)
+                    cond_data.Day = floor(cond_data.RelativeDay);
+                else
+                    error('Column "RelativeDay" missing in pre-calc.');
+                end
+    
+                % Robust method to find max days
+                max_days_found = 0;
+                u_animals = unique(cond_data.Animal);
+                for ua = 1:length(u_animals)
+                    d_list = cond_data.Day(cond_data.Animal == u_animals(ua));
+                    days_present = length(unique(d_list(~isnan(d_list))));
+                    if days_present > max_days_found
+                        max_days_found = days_present;
+                    end
+                end
+                cond_durations(c) = max_days_found;
+                fprintf('   Condition %s: Max Duration = %d days\n', conditions_ordered{c}, max_days_found);
+            end
+            
+            x_end_points = cumsum(cond_durations);
+            x_start_points = [1, x_end_points(1:end-1) + 1];
+            x_mid_points = (x_start_points + x_end_points) / 2;
+    
+            % --- Main Plotting Loop by Sex ---
+            for i_sex = 1:2
+                ax = subplot(2, 1, i_sex, 'Parent', hFig5D_Indiv); hold(ax, 'on');
+                curr_animals = sex_groups{i_sex};
+                if i_sex == 1, curr_colors = male_indiv_colors; else, curr_colors = female_indiv_colors; end
+                
+                fprintf('DEBUG: Processing Sex Group %d (%s)...\n', i_sex, sex_titles{i_sex});
+                
+                for i_an = 1:length(curr_animals)
+                    an_id = curr_animals(i_an);
+                    X_concat = [];
+                    Y_concat = [];
+                    
+                    % Loop Conditions
+                    for c = 1:length(conditions_ordered)
+                        cond_name = conditions_ordered{c};
+                        
+                        % 1. Robust Filtering
+                        rows_idx = (dataTable.Animal == an_id) & ismember(dataTable.Condition, cond_name);
+                        an_cond_data = dataTable(rows_idx, :);
+                        
+                        if isempty(an_cond_data), continue; end
+                        
+                        try
+                            % 2. Create Day Column
+                            an_cond_data.Day = floor(an_cond_data.RelativeDay);
+                            
+                            % 3. Remove NaNs before summing
+                            valid_rows = ~isnan(an_cond_data.(metric_to_plot));
+                            an_cond_data = an_cond_data(valid_rows, :);
+                            
+                            if isempty(an_cond_data), continue; end
+                            
+                            % 4. Group Summary
+                            daily_totals = groupsummary(an_cond_data, 'Day', 'sum', metric_to_plot);
+                            daily_totals = sortrows(daily_totals, 'Day');
+                            
+                            % 5. Create Coordinates
+                            days_present = height(daily_totals);
+                            if days_present > 0
+                               x_vals = (x_start_points(c) : x_start_points(c) + days_present - 1)';
+                               y_vals = daily_totals.(['sum_', metric_to_plot]);
+                               
+                               X_concat = [X_concat; x_vals];
+                               Y_concat = [Y_concat; y_vals];
+                            end
+                            
+                        catch inner_err
+                            fprintf('ERROR in Inner Loop: Animal %s, Condition %s\n', char(an_id), cond_name);
+                            rethrow(inner_err); 
+                        end
+                    end
+                    
+                    % Plot continuous line
+                    if ~isempty(X_concat)
+                        % DEBUG PRINT to confirm data flow
+                        fprintf('   Animal %s: Plotting %d points (Mean Y=%.2e)\n', char(an_id), length(X_concat), mean(Y_concat));
+                        
+                        plot(ax, X_concat, Y_concat, '-o', 'Color', curr_colors(i_an, :), ...
+                            'LineWidth', 1.2, 'MarkerSize', 4, 'MarkerFaceColor', curr_colors(i_an, :), ...
+                            'DisplayName', char(an_id));
+                    else
+                        fprintf('   Warning: No valid data generated for Animal %s\n', char(an_id));
+                    end
+                end
+                
+                % Formatting
+                title(ax, sprintf('%s - Individual Daily Total Activity', sex_titles{i_sex}));
+                ylabel(ax, ylabel_str);
+
+                ylim(ax, [0, 3e8]);
+                
+                % Vertical dividers
+                yl = ylim(ax);
+    
+                for c = 1:length(conditions_ordered)-1
+                    x_line = x_end_points(c) + 0.5;
+                    line(ax, [x_line, x_line], yl, 'Color', [0.4 0.4 0.4], 'LineStyle', '--', 'LineWidth', 1.5, 'HandleVisibility', 'off');
+                end
+                
+                set(ax, 'XTick', x_mid_points, 'XTickLabel', conditions_ordered);
+                grid(ax, 'on'); set(ax, 'FontSize', 10);
+            end
+            
+            xlabel(ax, 'Condition Time Course (Days Concatenated)');
+            sgtitle(hFig5D_Indiv, 'Figure 5D (Indiv): Daily Activity Trails by Sex (Pixel Diff)', 'FontSize', 14);
+            
+            fig_filename = fullfile(savePath_Fig5, 'Figure5D_Indiv_ConcatenatedTrails_PixelDiff.png');
+            exportgraphics(hFig5D_Indiv, fig_filename); disp(['Saved: ', fig_filename]); close(hFig5D_Indiv);
+            
+        catch ME_5D
+            warning('ErrGen:Fig5D_Indiv','Error Fig 5D_Indiv: %s', ME_5D.message);
+        end
+    
+    else
+        disp('Skipping Figure 5D_Indiv for Normalized Activity (PixelDiff only requested).');
+    end
 
     %% FIG 5E: ON:OFF Activity Percent Change Plot (8-Violin Sex Comparison)
     disp('--- Starting Figure 5E: ON-OFF Pct Change by Sex ---');
