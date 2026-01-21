@@ -1527,149 +1527,274 @@ for met_idx = 1:length(activity_metrics_to_plot)
         exportgraphics(hFig5C_Diff, fullfile(savePath_Fig5, sprintf('Figure5C_HourlyDiff_Bar_%s.png', current_metric_suffix))); close(hFig5C_Diff);
     catch ME_5C, warning('ErrGen:Fig5C','Error Fig 5C (%s): %s', current_metric_suffix, ME_5C.message); end
 
-    %% FIG 5D_Indiv: Individual Animal Activity Trails over Concatenated Conditions (PixelDiff Only)
-    % Purpose: Visualize individual variability over time across conditions, split by sex.
-    % FIX: Explicitly removes NaNs.
-    % FIX: Synchronizes Y-Limits.
-    % FIX: Uses Legend instead of text labels.
+    %% FIG 5D VARIATIONS: Smooth, Weekly, and Small Multiples (PixelDiff Only)
+    % Purpose: Generate 3 variations of individual trajectory plots.
     
     if strcmp(current_metric_var, 'SelectedPixelDifference')
-        disp('--- Starting Figure 5D_Indiv: Individual Concatenated Time Trails (LEGEND ADDED) ---');
+        disp('--- Starting Figure 5D Variations (Smooth, Weekly, Grid) ---');
         metric_to_plot = 'SelectedPixelDifference'; 
         ylabel_str = 'Daily Total Pixel Difference';
-    
+        
+        % --- MANUAL Y-LIMIT SETTING ---
+        manual_ylim = 4e8; 
+        
+        conditions_ordered = {'300Lux', '1000Lux', 'FullDark', '300LuxEnd'};
+        sex_titles = {'Males', 'Females'};
+        male_indiv_colors = parula(length(maleAnimals));
+        female_indiv_colors = autumn(length(femaleAnimals));
+        
         try
-            hFig5D_Indiv = figure('Name', 'Fig 5D_Indiv: Individual Concatenated Trails', ...
-                'Visible', 'off', 'Color', 'w', 'Position', [100, 100, 1000, 800]);
-            
-            conditions_ordered = {'300Lux', '1000Lux', 'FullDark', '300LuxEnd'};
-            sex_titles = {'Males', 'Females'};
-            
-            % Distinct colors
-            male_indiv_colors = parula(length(maleAnimals));
-            female_indiv_colors = autumn(length(femaleAnimals));
-            
-            % --- Pre-Calculation 1: Condition Durations ---
+            % --- SHARED PRE-CALCULATIONS ---
+            % 1. Condition Durations (for X-axis) - WITH 300LuxEnd TRUNCATION
             cond_durations = zeros(1, length(conditions_ordered));
-            fprintf('DEBUG: Calculating Condition Durations...\n');
-            
             for c = 1:length(conditions_ordered)
                 cond_idx = ismember(dataTable.Condition, conditions_ordered{c});
                 cond_data = dataTable(cond_idx, :);
-                
-                if isempty(cond_data)
-                    fprintf('   Warning: No data found for condition %s\n', conditions_ordered{c});
-                    continue; 
-                end
+                if isempty(cond_data), continue; end
                 
                 if ismember('RelativeDay', cond_data.Properties.VariableNames)
                     cond_data.Day = floor(cond_data.RelativeDay);
-                else
-                    error('Column "RelativeDay" missing in pre-calc.');
-                end
-    
-                max_days_found = 0;
-                u_animals = unique(cond_data.Animal);
-                for ua = 1:length(u_animals)
-                    d_list = cond_data.Day(cond_data.Animal == u_animals(ua));
-                    days_present = length(unique(d_list(~isnan(d_list))));
-                    if days_present > max_days_found
-                        max_days_found = days_present;
-                    end
-                end
-                cond_durations(c) = max_days_found;
-            end
-            
-            x_end_points = cumsum(cond_durations);
-            x_start_points = [1, x_end_points(1:end-1) + 1];
-            x_mid_points = (x_start_points + x_end_points) / 2;
-
-            % --- Main Plotting Loop by Sex ---
-            for i_sex = 1:2
-                ax = subplot(2, 1, i_sex, 'Parent', hFig5D_Indiv); hold(ax, 'on');
-                curr_animals = sex_groups{i_sex};
-                if i_sex == 1, curr_colors = male_indiv_colors; else, curr_colors = female_indiv_colors; end
+                else, error('RelativeDay missing'); end
                 
-                fprintf('DEBUG: Processing Sex Group %d (%s)...\n', i_sex, sex_titles{i_sex});
+                % TRUNCATE 300LuxEnd to 7 days max for continuity logic
+                if strcmp(conditions_ordered{c}, '300LuxEnd')
+                    cond_data = cond_data(cond_data.Day <= 7, :); 
+                end
+                
+                max_d = 0;
+                u_ans = unique(cond_data.Animal);
+                for ua = 1:length(u_ans)
+                    d_list = cond_data.Day(cond_data.Animal == u_ans(ua));
+                    days_pres = length(unique(d_list(~isnan(d_list))));
+                    if days_pres > max_d, max_d = days_pres; end
+                end
+                cond_durations(c) = max_d;
+            end
+            x_end = cumsum(cond_durations);
+            x_start = [1, x_end(1:end-1) + 1];
+            x_mid = (x_start + x_end) / 2;
+            
+            
+            %% VARIATION 1: SMOOTHED TRAJECTORIES (3-Day Moving Average)
+            hFig_Smooth = figure('Name', 'Fig 5D_Smooth', 'Visible', 'off', 'Color', 'w', 'Position', [100, 100, 1000, 800]);
+            sgtitle(hFig_Smooth, 'Figure 5D (Smooth): 3-Day Moving Average', 'FontSize', 14);
+            
+            for i_sex = 1:2
+                ax = subplot(2, 1, i_sex, 'Parent', hFig_Smooth); hold(ax, 'on');
+                curr_animals = sex_groups{i_sex};
+                if i_sex == 1, c_map = male_indiv_colors; else, c_map = female_indiv_colors; end
                 
                 for i_an = 1:length(curr_animals)
                     an_id = curr_animals(i_an);
-                    X_concat = [];
-                    Y_concat = [];
+                    X_cat = []; Y_cat = [];
                     
                     for c = 1:length(conditions_ordered)
-                        cond_name = conditions_ordered{c};
+                        rows = (dataTable.Animal == an_id) & ismember(dataTable.Condition, conditions_ordered{c});
+                        d = dataTable(rows, :);
+                        d = d(~isnan(d.(metric_to_plot)), :);
+                        if isempty(d), continue; end
+                        d.Day = floor(d.RelativeDay);
                         
-                        rows_idx = (dataTable.Animal == an_id) & ismember(dataTable.Condition, cond_name);
-                        an_cond_data = dataTable(rows_idx, :);
+                        % APPLY FILTER: 300LuxEnd -> First 7 Days only
+                        if strcmp(conditions_ordered{c}, '300LuxEnd')
+                            d = d(d.Day <= 7, :);
+                        end
                         
-                        if isempty(an_cond_data), continue; end
+                        ds = groupsummary(d, 'Day', 'sum', metric_to_plot);
+                        ds = sortrows(ds, 'Day');
                         
-                        try
-                            an_cond_data.Day = floor(an_cond_data.RelativeDay);
-                            
-                            valid_rows = ~isnan(an_cond_data.(metric_to_plot));
-                            an_cond_data = an_cond_data(valid_rows, :);
-                            
-                            if isempty(an_cond_data), continue; end
-                            
-                            daily_totals = groupsummary(an_cond_data, 'Day', 'sum', metric_to_plot);
-                            daily_totals = sortrows(daily_totals, 'Day');
-                            
-                            days_present = height(daily_totals);
-                            if days_present > 0
-                               x_vals = (x_start_points(c) : x_start_points(c) + days_present - 1)';
-                               y_vals = daily_totals.(['sum_', metric_to_plot]);
-                               
-                               X_concat = [X_concat; x_vals];
-                               Y_concat = [Y_concat; y_vals];
-                            end
-                            
-                        catch inner_err
-                            fprintf('ERROR in Inner Loop: Animal %s, Condition %s\n', char(an_id), cond_name);
-                            rethrow(inner_err); 
+                        if height(ds)>0
+                            x_pts = (x_start(c) : x_start(c) + height(ds) - 1)';
+                            y_pts = ds.(['sum_', metric_to_plot]);
+                            X_cat = [X_cat; x_pts]; Y_cat = [Y_cat; y_pts];
                         end
                     end
                     
-                    % Plot continuous line
-                    if ~isempty(X_concat)
-                        plot(ax, X_concat, Y_concat, '-o', 'Color', curr_colors(i_an, :), ...
-                            'LineWidth', 1.2, 'MarkerSize', 4, 'MarkerFaceColor', curr_colors(i_an, :), ...
+                    if ~isempty(X_cat)
+                        % Smoothing
+                        Y_smooth = movmean(Y_cat, 3);
+                        plot(ax, X_cat, Y_smooth, '-', 'Color', c_map(i_an,:), 'LineWidth', 2, 'DisplayName', char(an_id));
+                    end
+                end
+                
+                title(ax, sex_titles{i_sex}); ylabel(ax, ylabel_str);
+                ylim(ax, [0, manual_ylim]); xlim(ax, [0, x_end(end)*1.05]);
+                set(ax, 'XTick', x_mid, 'XTickLabel', conditions_ordered); grid(ax,'on');
+                
+                % Dividers (HandleVisibility off)
+                yl=ylim(ax); 
+                for c=1:length(conditions_ordered)-1
+                    x_line=x_end(c)+0.5; 
+                    line(ax,[x_line x_line],yl,'Color',[.4 .4 .4],'LineStyle','--', 'HandleVisibility', 'off'); 
+                end
+                
+                % Legend
+                legend(ax, 'Location', 'northeast', 'NumColumns', 1, 'FontSize', 8);
+            end
+            exportgraphics(hFig_Smooth, fullfile(savePath_Fig5, 'Figure5D_Smooth_PixelDiff.png')); close(hFig_Smooth);
+    
+            
+            %% VARIATION 2: WEEKLY MEANS + SD (Visualizing Stability)
+            hFig_Weekly = figure('Name', 'Fig 5D_Weekly', 'Visible', 'off', 'Color', 'w', 'Position', [100, 100, 1000, 800]);
+            sgtitle(hFig_Weekly, 'Figure 5D (Weekly): Mean +/- SD per Week', 'FontSize', 14);
+            
+            for i_sex = 1:2
+                ax = subplot(2, 1, i_sex, 'Parent', hFig_Weekly); hold(ax, 'on');
+                curr_animals = sex_groups{i_sex};
+                if i_sex == 1, c_map = male_indiv_colors; else, c_map = female_indiv_colors; end
+                
+                for i_an = 1:length(curr_animals)
+                    an_id = curr_animals(i_an);
+                    
+                    for c = 1:length(conditions_ordered)
+                        rows = (dataTable.Animal == an_id) & ismember(dataTable.Condition, conditions_ordered{c});
+                        d = dataTable(rows, :);
+                        d = d(~isnan(d.(metric_to_plot)), :);
+                        if isempty(d), continue; end
+                        d.Day = floor(d.RelativeDay);
+                        
+                        % APPLY FILTER: 300LuxEnd -> First 7 Days only (Results in 1 point)
+                        if strcmp(conditions_ordered{c}, '300LuxEnd')
+                            d = d(d.Day <= 7, :);
+                        end
+                        
+                        ds = groupsummary(d, 'Day', 'sum', metric_to_plot);
+                        
+                        % Weekly Binning
+                        num_days = height(ds);
+                        num_weeks = ceil(num_days / 7);
+                        
+                        x_week = []; y_week = []; y_sd = [];
+                        
+                        for w = 1:num_weeks
+                            start_d = (w-1)*7 + 1;
+                            end_d = min(w*7, num_days);
+                            idx = start_d:end_d;
+                            w_data = ds.(['sum_', metric_to_plot])(idx);
+                            
+                            % X at center of week
+                            x_center = x_start(c) + (start_d + end_d)/2 - 1;
+                            x_week = [x_week; x_center];
+                            y_week = [y_week; mean(w_data)];
+                            y_sd   = [y_sd; std(w_data)];
+                        end
+                        
+                        errorbar(ax, x_week, y_week, y_sd, '-o', 'Color', c_map(i_an,:), ...
+                            'LineWidth', 1.5, 'MarkerSize', 5, 'MarkerFaceColor', c_map(i_an,:), ...
                             'DisplayName', char(an_id));
                     end
                 end
                 
-                % Formatting
-                title(ax, sprintf('%s - Individual Daily Total Activity', sex_titles{i_sex}));
-                ylabel(ax, ylabel_str);
-                ylim(ax, [0, 3e8]);
+                title(ax, sex_titles{i_sex}); ylabel(ax, ylabel_str);
+                ylim(ax, [0, manual_ylim]); xlim(ax, [0, x_end(end)*1.05]);
+                set(ax, 'XTick', x_mid, 'XTickLabel', conditions_ordered); grid(ax,'on');
                 
-                % Vertical dividers
-                yl = ylim(ax);
-                for c = 1:length(conditions_ordered)-1
-                    x_line = x_end_points(c) + 0.5;
-                    line(ax, [x_line, x_line], yl, 'Color', [0.4 0.4 0.4], 'LineStyle', '--', 'LineWidth', 1.5, 'HandleVisibility', 'off');
+                % Dividers (HandleVisibility off)
+                yl=ylim(ax); 
+                for c=1:length(conditions_ordered)-1
+                    x_line=x_end(c)+0.5; 
+                    line(ax,[x_line x_line],yl,'Color',[.4 .4 .4],'LineStyle','--', 'HandleVisibility', 'off'); 
                 end
                 
-                set(ax, 'XTick', x_mid_points, 'XTickLabel', conditions_ordered);
-                grid(ax, 'on'); set(ax, 'FontSize', 10);
+            end
+            exportgraphics(hFig_Weekly, fullfile(savePath_Fig5, 'Figure5D_Weekly_PixelDiff.png')); close(hFig_Weekly);
+    
+            
+            %% VARIATION 3: SMALL MULTIPLES (Grid Layout 6x2)
+            hFig_Grid = figure('Name', 'Fig 5D_Grid', 'Visible', 'off', 'Color', 'w', 'Position', [100, 100, 1200, 1000]);
+            sgtitle(hFig_Grid, 'Figure 5D (Individual): Trajectories', 'FontSize', 14);
+            
+            num_rows = max(length(maleAnimals), length(femaleAnimals));
+            
+            for r = 1:num_rows
+                % -- PLOT MALE (Left Column) --
+                if r <= length(maleAnimals)
+                    ax = subplot(num_rows, 2, (r-1)*2 + 1, 'Parent', hFig_Grid); hold(ax,'on');
+                    an_id = maleAnimals(r);
+                    col = male_indiv_colors(r, :);
+                    
+                    X_cat=[]; Y_cat=[];
+                    for c=1:length(conditions_ordered)
+                        rows=(dataTable.Animal==an_id)&ismember(dataTable.Condition,conditions_ordered{c});
+                        d=dataTable(rows,:); d=d(~isnan(d.(metric_to_plot)),:);
+                        if ~isempty(d)
+                            d.Day=floor(d.RelativeDay); 
+                            % APPLY FILTER
+                            if strcmp(conditions_ordered{c}, '300LuxEnd'), d=d(d.Day<=7, :); end
+                            
+                            ds=groupsummary(d,'Day','sum',metric_to_plot); ds=sortrows(ds,'Day');
+                            if height(ds)>0
+                                X_cat=[X_cat; (x_start(c):x_start(c)+height(ds)-1)'];
+                                Y_cat=[Y_cat; ds.(['sum_',metric_to_plot])];
+                            end
+                        end
+                    end
+                    if ~isempty(X_cat)
+                        plot(ax, X_cat, Y_cat, '-o', 'Color', col, 'LineWidth', 1.2, 'MarkerSize', 3, 'MarkerFaceColor', col);
+                    end
+                    
+                    ylabel(ax, char(an_id), 'FontSize', 9, 'FontWeight','bold'); 
+                    if r==1, title(ax, 'Males'); end
+                    ylim(ax, [0, manual_ylim]); xlim(ax, [0, x_end(end)]);
+                    
+                    % Dividers
+                    yl=ylim(ax); 
+                    for c=1:length(conditions_ordered)-1
+                        x_line=x_end(c)+0.5; 
+                        line(ax,[x_line x_line],yl,'Color',[.8 .8 .8],'LineStyle','--', 'HandleVisibility', 'off'); 
+                    end
+                    
+                    if r < num_rows, set(ax, 'XTick', []); else, set(ax, 'XTick', x_mid, 'XTickLabel', conditions_ordered); end
+                end
                 
-                % --- LEGEND ADDED HERE ---
-                legend(ax, 'Location', 'northeast', 'NumColumns', 1, 'FontSize', 8);
+                % -- PLOT FEMALE (Right Column) --
+                if r <= length(femaleAnimals)
+                    ax = subplot(num_rows, 2, (r-1)*2 + 2, 'Parent', hFig_Grid); hold(ax,'on');
+                    an_id = femaleAnimals(r);
+                    col = female_indiv_colors(r, :);
+                    
+                    X_cat=[]; Y_cat=[];
+                    for c=1:length(conditions_ordered)
+                        rows=(dataTable.Animal==an_id)&ismember(dataTable.Condition,conditions_ordered{c});
+                        d=dataTable(rows,:); d=d(~isnan(d.(metric_to_plot)),:);
+                        if ~isempty(d)
+                            d.Day=floor(d.RelativeDay); 
+                            % APPLY FILTER
+                            if strcmp(conditions_ordered{c}, '300LuxEnd'), d=d(d.Day<=7, :); end
+                            
+                            ds=groupsummary(d,'Day','sum',metric_to_plot); ds=sortrows(ds,'Day');
+                            if height(ds)>0
+                                X_cat=[X_cat; (x_start(c):x_start(c)+height(ds)-1)'];
+                                Y_cat=[Y_cat; ds.(['sum_',metric_to_plot])];
+                            end
+                        end
+                    end
+                    if ~isempty(X_cat)
+                        plot(ax, X_cat, Y_cat, '-o', 'Color', col, 'LineWidth', 1.2, 'MarkerSize', 3, 'MarkerFaceColor', col);
+                    end
+                    
+                    ylabel(ax, char(an_id), 'FontSize', 9, 'FontWeight','bold');
+                    if r==1, title(ax, 'Females'); end
+                    ylim(ax, [0, manual_ylim]); xlim(ax, [0, x_end(end)]);
+                    
+                    % Dividers
+                    yl=ylim(ax); 
+                    for c=1:length(conditions_ordered)-1
+                        x_line=x_end(c)+0.5; 
+                        line(ax,[x_line x_line],yl,'Color',[.8 .8 .8],'LineStyle','--', 'HandleVisibility', 'off'); 
+                    end
+                    
+                    if r < num_rows, set(ax, 'XTick', []); else, set(ax, 'XTick', x_mid, 'XTickLabel', conditions_ordered); end
+                end
             end
             
-            xlabel(ax, 'Condition Time Course (Days Concatenated)');
-            sgtitle(hFig5D_Indiv, 'Figure 5D (Indiv): Daily Activity Trails by Sex (Pixel Diff)', 'FontSize', 14);
+            exportgraphics(hFig_Grid, fullfile(savePath_Fig5, 'Figure5D_SmallMultiples_PixelDiff.png')); close(hFig_Grid);
             
-            fig_filename = fullfile(savePath_Fig5, 'Figure5D_Indiv_ConcatenatedTrails_PixelDiff.png');
-            exportgraphics(hFig5D_Indiv, fig_filename); disp(['Saved: ', fig_filename]); close(hFig5D_Indiv);
-            
-        catch ME_5D
-            warning('ErrGen:Fig5D_Indiv','Error Fig 5D_Indiv: %s', ME_5D.message);
+        catch ME_5D_Var
+            warning('ErrGen:Fig5D_Var','Error Fig 5D Variations: %s', ME_5D_Var.message);
         end
-    
     else
-        disp('Skipping Figure 5D_Indiv for Normalized Activity (PixelDiff only requested).');
+        disp('Skipping Figure 5D Variations for Normalized Activity.');
     end
 
     %% FIG 5E: ON:OFF Activity Percent Change Plot (8-Violin Sex Comparison)
