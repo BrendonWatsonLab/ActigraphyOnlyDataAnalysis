@@ -2696,6 +2696,182 @@ for met_idx = 1:length(activity_metrics_to_plot)
         warning('ErrGen:Fig5K','Error Fig 5K (%s): %s', current_metric_suffix, ME_5K.message); 
     end
 end
+
+%% FIG 6: Full Dark Free-Running Analysis
+if strcmp(current_metric_var, 'SelectedPixelDifference')
+    disp('--- Starting Figure 6: Free-Running Period & Circadian Time Profiles ---');
+    try
+        % 1. Extract FullDark Data
+        fd_data = dataTable(dataTable.Condition == 'FullDark', :);
+        
+        if isempty(fd_data)
+            error('No FullDark data found for Free-Running analysis.');
+        end
+        
+        % Ensure RelativeDay exists
+        if ~ismember('RelativeDay', fd_data.Properties.VariableNames)
+            error('Column "RelativeDay" is missing.');
+        end
+        
+        % Initialize storage for tau
+        tau_results = struct('Animal', {}, 'Sex', {}, 'Tau', {});
+        ct_data_compiled = table(); % Will hold data re-aligned to CT
+        
+        % Search range for periodogram (22 to 26 hours)
+        tau_search_range = linspace(22, 26, 2000); 
+        f_vec = 1 ./ tau_search_range;
+        
+        % --- STEP 1: Calculate Tau for each animal ---
+        fprintf('DEBUG: Calculating Free-Running Period (Tau) via Lomb-Scargle...\n');
+        u_animals = unique(fd_data.Animal);
+        
+        for i_an = 1:length(u_animals)
+            an_id = u_animals(i_an);
+            an_data = fd_data(fd_data.Animal == an_id, :);
+            
+            % Determine Sex
+            if ismember(an_id, maleAnimals), sex_str = 'Male';
+            elseif ismember(an_id, femaleAnimals), sex_str = 'Female';
+            else, continue; end
+            
+            % Create continuous elapsed hours vector
+            % Subtract min to start at 0, multiply by 24 for hours
+            t_hours = (an_data.RelativeDay - min(an_data.RelativeDay)) * 24;
+            y_vals = an_data.(current_metric_var);
+            
+            % Remove NaNs for plomb
+            valid_idx = ~isnan(y_vals) & ~isnan(t_hours);
+            t_clean = t_hours(valid_idx);
+            y_clean = y_vals(valid_idx);
+            
+            if length(y_clean) < 48 % Need at least 2 days of data
+                fprintf('   Skipping Animal %s (Insufficient valid data)\n', char(an_id));
+                continue;
+            end
+            
+            % Mean-center data
+            y_clean = y_clean - mean(y_clean);
+            
+            % Run Periodogram
+            [pxx, f] = plomb(y_clean, t_clean, f_vec);
+            [~, peak_idx] = max(pxx);
+            best_tau = 1 / f(peak_idx);
+            
+            % Save Tau
+            tau_results(end+1) = struct('Animal', an_id, 'Sex', sex_str, 'Tau', best_tau);
+            fprintf('   Animal %s (%s): Tau = %.2f hrs\n', char(an_id), sex_str, best_tau);
+            
+            % --- STEP 2: Re-align to Circadian Time (CT) ---
+            % Formula: Phase = mod(Elapsed, Tau) * (24/Tau)
+            ct_float = mod(t_clean, best_tau) * (24 / best_tau);
+            ct_hour = floor(ct_float); % Map to integer bins 0-23
+            
+            % Store in compiled table
+            temp_t = table(repmat(an_id, length(y_clean), 1), repmat({sex_str}, length(y_clean), 1), ...
+                           ct_hour, y_clean + mean(y_vals(valid_idx)), ... % add mean back for plotting magnitude
+                           'VariableNames', {'Animal', 'Sex', 'CT_Hour', 'Metric'});
+            ct_data_compiled = [ct_data_compiled; temp_t];
+        end
+        
+        
+        %% --- FIG 6A: Compare Tau by Sex ---
+        hFig6A = figure('Name', 'Fig 6A: Free-Running Period (Tau)', 'Visible', 'off', 'Color', 'w', 'Position', [100, 100, 600, 500]);
+        ax6A = axes('Parent', hFig6A); hold(ax6A, 'on');
+        
+        tau_males = [tau_results(strcmp({tau_results.Sex}, 'Male')).Tau];
+        tau_females = [tau_results(strcmp({tau_results.Sex}, 'Female')).Tau];
+        
+        % Plot Bars/Points
+        bar(ax6A, 1, mean(tau_males), 'FaceColor', maleColor, 'EdgeColor', 'none', 'BarWidth', 0.6);
+        bar(ax6A, 2, mean(tau_females), 'FaceColor', femaleColor, 'EdgeColor', 'none', 'BarWidth', 0.6);
+        
+        plot(ax6A, 1 + randn(size(tau_males))*0.05, tau_males, 'k.', 'MarkerSize', 15);
+        plot(ax6A, 2 + randn(size(tau_females))*0.05, tau_females, 'k.', 'MarkerSize', 15);
+        
+        % Formatting
+        ylabel(ax6A, 'Free-Running Period \tau (Hours)');
+        xticks(ax6A, [1, 2]); xticklabels(ax6A, {'Males', 'Females'});
+        ylim(ax6A, [23, 25]); % Zoom in on circadian range
+        title(ax6A, 'Fig 6A: Intrinsic Clock Speed in Full Dark');
+        
+        % Stats
+        fprintf('\n--- STATS: Figure 6A (Tau Comparison) ---\n');
+        if length(tau_males) >= 3 && length(tau_females) >= 3
+            [~, p_ks_m] = kstest((tau_males-mean(tau_males))/std(tau_males));
+            [~, p_ks_f] = kstest((tau_females-mean(tau_females))/std(tau_females));
+            if p_ks_m > 0.05 && p_ks_f > 0.05
+                [~, p_tau] = ttest2(tau_males, tau_females); test_name = 'T-Test';
+            else
+                p_tau = ranksum(tau_males, tau_females); test_name = 'RankSum';
+            end
+            fprintf('   %s | M: %.2f hrs vs F: %.2f hrs | p = %.4f\n', test_name, mean(tau_males), mean(tau_females), p_tau);
+            
+            % Add sig star if needed
+            if p_tau < 0.05
+                y_star = max([tau_males, tau_females]) + 0.2;
+                plot(ax6A, [1, 2], [y_star, y_star], '-k', 'LineWidth', 1.5);
+                text(ax6A, 1.5, y_star + 0.05, '*', 'FontSize', 16, 'HorizontalAlignment', 'center');
+                ylim(ax6A, [23, y_star + 0.3]);
+            end
+        else
+            fprintf('   Insufficient N for Tau stats.\n');
+        end
+        
+        fig_name_6A = fullfile(savePath_Fig5, 'Figure6A_Tau_Comparison.png'); % Saving in Fig5 folder to keep together
+        exportgraphics(hFig6A, fig_name_6A); disp(['Saved: ', fig_name_6A]); close(hFig6A);
+        
+        
+        %% --- FIG 6B: Circadian Time (CT) Profiles ---
+        hFig6B = figure('Name', 'Fig 6B: Circadian Time Profiles', 'Visible', 'off', 'Color', 'w', 'Position', [100, 100, 800, 500]);
+        ax6B = axes('Parent', hFig6B); hold(ax6B, 'on');
+        
+        % Plot Males
+        m_ct = ct_data_compiled(strcmp(ct_data_compiled.Sex, 'Male'), :);
+        if ~isempty(m_ct)
+            m_stats = groupsummary(m_ct, 'CT_Hour', {'mean', 'std', 'nnz'}, 'Metric');
+            m_mean = m_stats.mean_Metric;
+            m_sem = m_stats.std_Metric ./ sqrt(m_stats.nnz_Metric);
+            
+            plot(ax6B, m_stats.CT_Hour, m_mean, 'Color', maleColor, 'LineWidth', 2, 'DisplayName', 'Males');
+            fill(ax6B, [m_stats.CT_Hour; flipud(m_stats.CT_Hour)], [m_mean-m_sem; flipud(m_mean+m_sem)], ...
+                maleColor, 'FaceAlpha', 0.2, 'EdgeColor', 'none', 'HandleVisibility', 'off');
+        end
+        
+        % Plot Females
+        f_ct = ct_data_compiled(strcmp(ct_data_compiled.Sex, 'Female'), :);
+        if ~isempty(f_ct)
+            f_stats = groupsummary(f_ct, 'CT_Hour', {'mean', 'std', 'nnz'}, 'Metric');
+            f_mean = f_stats.mean_Metric;
+            f_sem = f_stats.std_Metric ./ sqrt(f_stats.nnz_Metric);
+            
+            plot(ax6B, f_stats.CT_Hour, f_mean, 'Color', femaleColor, 'LineWidth', 2, 'DisplayName', 'Females');
+            fill(ax6B, [f_stats.CT_Hour; flipud(f_stats.CT_Hour)], [f_mean-f_sem; flipud(f_mean+f_sem)], ...
+                femaleColor, 'FaceAlpha', 0.2, 'EdgeColor', 'none', 'HandleVisibility', 'off');
+        end
+        
+        % Formatting
+        title(ax6B, 'Fig 6B: Full Dark Activity Aligned to Circadian Time (CT)');
+        xlabel(ax6B, 'Circadian Time (CT Hour)');
+        ylabel(ax6B, 'Mean SelectedPixelDifference');
+        xlim(ax6B, [-0.5, 23.5]); xticks(ax6B, 0:6:23);
+        
+        % Shading Subjective Night (Usually CT 12-24)
+        yl = ylim(ax6B);
+        patch(ax6B, [12, 24, 24, 12], [yl(1) yl(1) yl(2) yl(2)], [0.9 0.9 0.9], ...
+            'FaceAlpha', 0.3, 'EdgeColor', 'none', 'HandleVisibility', 'off');
+        
+        legend(ax6B, 'Location', 'best'); grid(ax6B, 'on');
+        
+        fig_name_6B = fullfile(savePath_Fig5, 'Figure6B_CT_Profiles.png');
+        exportgraphics(hFig6B, fig_name_6B); disp(['Saved: ', fig_name_6B]); close(hFig6B);
+        
+    catch ME_6
+        warning('ErrGen:Fig6','Error Fig 6 (Tau/CT): %s', ME_6.message);
+    end
+else
+    disp('Skipping Figure 6 for Normalized Activity.');
+end
+
 disp('=====================================================');
 disp('--- All Figure Generation Complete ---');
 disp('=====================================================');
