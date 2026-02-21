@@ -2226,6 +2226,114 @@ for met_idx = 1:length(activity_metrics_to_plot)
         warning('ErrGen:Fig5G','Error Fig 5G (%s): %s', current_metric_suffix, ME_5G.message); 
     end
 
+    %% FIG 5G_New: ZT 0-5 Percent Change (Violin Plot)
+    if strcmp(current_metric_var, 'SelectedPixelDifference')
+        disp('--- Starting Figure 5G_New: ZT 0-5 Morning Masking % Change ---');
+        try
+            hFig5G_New = figure('Name', 'Fig 5G_New: ZT 0-5 % Change', 'Visible', 'off', 'Color', 'w');
+            ax5G = axes('Parent', hFig5G_New); hold(ax5G, 'on');
+            
+            % Config
+            sexes_5G = {'Male', 'Female'};
+            morning_data = dataTable(dataTable.(ztHourVar) >= 0 & dataTable.(ztHourVar) <= 5, :);
+            
+            % Fallback for grayColor if not in workspace
+            if ~exist('grayColor', 'var'), grayColor = [0.6 0.6 0.6]; end 
+            
+            plotTable_5G = table();
+            
+            % Data Collection
+            for i_sex = 1:length(sexes_5G)
+                sex_name = sexes_5G{i_sex};
+                if strcmp(sex_name, 'Male'), current_animals = maleAnimals; else, current_animals = femaleAnimals; end
+                
+                for i_an = 1:length(current_animals)
+                    an_id = current_animals(i_an);
+                    
+                    % 300Lux
+                    d300 = morning_data(morning_data.Animal == an_id & morning_data.Condition == '300Lux', :);
+                    val_300 = mean(d300.(current_metric_var), 'omitnan');
+                    
+                    % 1000Lux
+                    d1000 = morning_data(morning_data.Animal == an_id & morning_data.Condition == '1000Lux', :);
+                    val_1000 = mean(d1000.(current_metric_var), 'omitnan');
+                    
+                    if ~isnan(val_300) && ~isnan(val_1000) && val_300 > 0
+                        pct_change = ((val_1000 - val_300) / val_300) * 100;
+                        
+                        % Append rows using STRING casting to prevent 'unique' error
+                        row_pct = table(string(an_id), string(sex_name), pct_change, ...
+                            'VariableNames', {'Animal', 'Sex', 'Value'});
+                            
+                        plotTable_5G = [plotTable_5G; row_pct];
+                    end
+                end
+            end
+            
+            % Plotting
+            grp_order = {'Male', 'Female'};
+            plotTable_5G.Group = categorical(plotTable_5G.Sex, grp_order);
+            
+            violinplot(plotTable_5G.Value, plotTable_5G.Group, 'Parent', ax5G, 'GroupOrder', grp_order, 'ShowData', false, 'ViolinColor', grayColor);
+            
+            % Scatter Overlay (Matches 5H style)
+            jitterAmount = 0.15;
+            for i_g = 1:length(grp_order)
+                g_name = grp_order{i_g};
+                g_data = plotTable_5G(plotTable_5G.Group == g_name, :);
+                if ~isempty(g_data)
+                    x_scat = i_g + (rand(height(g_data),1)-0.5)*jitterAmount;
+                    if contains(g_name, 'Male'), col = maleColor; else, col = femaleColor; end
+                    scatter(ax5G, x_scat, g_data.Value, 40, col, 'filled', 'MarkerFaceAlpha', 0.9);
+                end
+            end
+            
+            % Stats: Independent Test (Male vs Female Pct Change)
+            fprintf('\n--- STATS: Figure 5G_New (ZT 0-5 Pct Change) ---\n');
+            m_data = plotTable_5G.Value(plotTable_5G.Group == 'Male');
+            f_data = plotTable_5G.Value(plotTable_5G.Group == 'Female');
+            
+            y_lims = ylim(ax5G); y_range = diff(y_lims);
+            y_pos = max(plotTable_5G.Value) + 0.10*y_range;
+            
+            if length(m_data) >= 3 && length(f_data) >= 3
+                if std(m_data)>0, [~, pk_m] = kstest((m_data-mean(m_data))/std(m_data)); else, pk_m=1; end
+                if std(f_data)>0, [~, pk_f] = kstest((f_data-mean(f_data))/std(f_data)); else, pk_f=1; end
+                
+                if pk_m > 0.05 && pk_f > 0.05
+                    [~, p] = ttest2(m_data, f_data); test_name = 'T-Test';
+                else
+                    p = ranksum(m_data, f_data); test_name = 'RankSum';
+                end
+                
+                fprintf('%s | Male vs Female Pct Change: p = %.4f\n', test_name, p);
+                
+                % Significance Markers (+ for trending, * for sig)
+                if p < 0.10
+                    plot(ax5G, [1, 2], [y_pos, y_pos], '-k', 'LineWidth', 1.5);
+                    if p < 0.05
+                        text(ax5G, 1.5, y_pos + 0.02*y_range, '*', 'FontSize', 20, 'HorizontalAlignment', 'center');
+                    else
+                        text(ax5G, 1.5, y_pos + 0.02*y_range, '+', 'FontSize', 16, 'HorizontalAlignment', 'center');
+                    end
+                end
+            end
+            
+            ylim(ax5G, [y_lims(1), y_pos + 0.15*y_range]); 
+            ylabel(ax5G, 'Percent Change (%) from 300 Lux (ZT 0-5)');
+            title(ax5G, 'Morning Masking Reactivity (ZT 0-5)');
+            set(ax5G, 'Position', [0.15 0.15 0.75 0.75]); % Slightly adjust padding
+            
+            fig_filename = fullfile(savePath_Fig5, 'Figure5G_ZT0to5_PctChange_Violin.png');
+            exportgraphics(hFig5G_New, fig_filename); disp(['Saved: ', fig_filename]); close(hFig5G_New);
+            
+        catch ME_5G
+            warning('ErrGen:Fig5G_New','Error Fig 5G_New: %s', ME_5G.message);
+        end
+    else
+        disp('Skipping Figure 5G_New for Normalized Activity.');
+    end
+
     %% FIG 5H: Mid-Phase Diurnality by Sex (FIXED TYPE ERROR)
     % Purpose: Test diurnality using only stable "Mid-Day" (ZT 3-9) vs "Mid-Night" (ZT 15-21) data.
     disp('--- Starting Figure 5H: Mid-Phase Diurnality ---');
@@ -3100,8 +3208,6 @@ if strcmp(current_metric_var, 'SelectedPixelDifference')
             warning('ErrGen:Diag','Error Diagnostic: %s', ME_Diag.message);
         end
     end
-else
-    disp('Skipping Figure 6 for Normalized Activity.');
 end
 
 disp('=====================================================');
