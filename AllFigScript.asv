@@ -2806,7 +2806,6 @@ for met_idx = 1:length(activity_metrics_to_plot)
 end
 
 %% FIG 6: Full Dark Free-Running Analysis
-current_metric_var = 'SelectedPixelDifference';
 if strcmp(current_metric_var, 'SelectedPixelDifference')
     disp('--- Starting Figure 6: Free-Running Period & Circadian Time Profiles ---');
     try
@@ -2979,127 +2978,110 @@ if strcmp(current_metric_var, 'SelectedPixelDifference')
     end
 
     %% FIG 6C: DIAGNOSTIC - ZT vs CT Comparison for Full Dark (Week 4)
-    % Purpose: Directly answer whether aligning to CT changes the statistical 
-    % outcome of DD diurnality compared to standard ZT, highlighting AO5.
-    
-    if strcmp(current_metric_var, 'SelectedPixelDifference')
-        disp('--- Starting Diagnostic: ZT vs CT in Last Week of Full Dark ---');
-        try
-            % 1. Isolate Last 7 Days of Full Dark
-            fd_data = dataTable(dataTable.Condition == 'FullDark', :);
-            
-            % We need tau_results from Fig 6. If missing, throw error.
-            if ~exist('tau_results', 'var')
-                error('tau_results not found. Run Figure 6A/B first.');
-            end
-            
-            m_zt_day = []; m_zt_night = []; m_ct_day = []; m_ct_night = [];
-            f_zt_day = []; f_zt_night = []; f_ct_day = []; f_ct_night = [];
-            
-            ao5_stats = struct(); % Store AO5 specifically for Lily
-            
-            u_ans = unique(fd_data.Animal);
-            for i = 1:length(u_ans)
-                an_id = u_ans(i);
-                d = fd_data(fd_data.Animal == an_id, :);
-                d.Day = floor(d.RelativeDay);
-                max_day = max(d.Day);
-                d_last_week = d(d.Day > (max_day - 7), :); % Last 7 days
-                
-                if isempty(d_last_week), continue; end
-                
-                % --- FIX: Robust String Matching for Tau ---
-                tau_animals = string({tau_results.Animal});
-                tau_idx = (tau_animals == string(an_id));
-                
-                if ~any(tau_idx)
-                    fprintf('   Warning: Could not find Tau match for Animal %s. Skipping...\n', string(an_id));
-                    continue; 
-                end
-                an_tau = tau_results(tau_idx).Tau;
-                
-                % Calculate CT for last week
-                % 1. Get all FullDark data for this animal to find the true start time
-                an_fd_data = fd_data(fd_data.Animal == an_id, :);
-                start_time = min(an_fd_data.RelativeDay);
-                
-                % 2. Find the exact ZT Hour when the FullDark condition started
-                start_zt_array = an_fd_data.(ztHourVar)(an_fd_data.RelativeDay == start_time);
-                start_zt = start_zt_array(1); % Extract the first value
-                
-                % 3. Calculate elapsed hours since the start of FullDark
-                t_hours = (d_last_week.RelativeDay - start_time) * 24;
-                
-                % 4. Add the starting ZT phase to the elapsed time
-                ct_float = mod(t_hours + start_zt, an_tau) * (24 / an_tau);
-                d_last_week.CT_Hour = floor(ct_float);
-                
-                % --- ZT Averages (Mid-Phase 3-9 vs 15-21) ---
-                zt_day_data = d_last_week.(current_metric_var)(d_last_week.(ztHourVar) >= 3 & d_last_week.(ztHourVar) <= 9);
-                zt_night_data = d_last_week.(current_metric_var)(d_last_week.(ztHourVar) >= 15 & d_last_week.(ztHourVar) <= 21);
-                zt_d_mean = mean(zt_day_data, 'omitnan');
-                zt_n_mean = mean(zt_night_data, 'omitnan');
-                
-                % --- CT Averages (Mid-Phase 3-9 vs 15-21) ---
-                ct_day_data = d_last_week.(current_metric_var)(d_last_week.CT_Hour >= 3 & d_last_week.CT_Hour <= 9);
-                ct_night_data = d_last_week.(current_metric_var)(d_last_week.CT_Hour >= 15 & d_last_week.CT_Hour <= 21);
-                ct_d_mean = mean(ct_day_data, 'omitnan');
-                ct_n_mean = mean(ct_night_data, 'omitnan');
-                
-                % Store AO5
-                if strcmp(string(an_id), "AO5")
-                    ao5_stats.zt_day = zt_d_mean; ao5_stats.zt_night = zt_n_mean;
-                    ao5_stats.ct_day = ct_d_mean; ao5_stats.ct_night = ct_n_mean;
-                end
-                
-                % Store by Sex
-                if ismember(an_id, maleAnimals)
-                    m_zt_day(end+1) = zt_d_mean; m_zt_night(end+1) = zt_n_mean;
-                    m_ct_day(end+1) = ct_d_mean; m_ct_night(end+1) = ct_n_mean;
-                elseif ismember(an_id, femaleAnimals)
-                    f_zt_day(end+1) = zt_d_mean; f_zt_night(end+1) = zt_n_mean;
-                    f_ct_day(end+1) = ct_d_mean; f_ct_night(end+1) = ct_n_mean;
-                end
-            end
-            
-            % --- PRINT DIAGNOSTIC RESULTS ---
-            fprintf('\n======================================================\n');
-            fprintf('  DIAGNOSTIC: ZT vs CT in Last Week of Full Dark\n');
-            fprintf('======================================================\n');
-            
-            fprintf('\n--- AO5 Specific Check (Tau = 23.81) ---\n');
-            if isfield(ao5_stats, 'zt_day')
-                fprintf('  Using Old ZT: Day Mean = %.0f, Night Mean = %.0f\n', ao5_stats.zt_day, ao5_stats.zt_night);
-                fprintf('  Using New CT: Day Mean = %.0f, Night Mean = %.0f\n', ao5_stats.ct_day, ao5_stats.ct_night);
-                pct_diff = abs(ao5_stats.ct_day - ao5_stats.zt_day) / ao5_stats.zt_day * 100;
-                fprintf('  Difference in calculated "Day" activity: %.1f%%\n', pct_diff);
-            else
-                fprintf('  AO5 data not found in this segment.\n');
-            end
-            
-            fprintf('\n--- Population Stats (Paired T-Test: Mid-Day vs Mid-Night) ---\n');
-            
-            if length(m_zt_day) >= 3
-                [~, p_m_zt] = ttest(m_zt_day, m_zt_night);
-                [~, p_m_ct] = ttest(m_ct_day, m_ct_night);
-                fprintf('  MALES (N=%d):\n', length(m_zt_day));
-                fprintf('    Old ZT Method p-value: %.4f\n', p_m_zt);
-                fprintf('    New CT Method p-value: %.4f\n', p_m_ct);
-            end
-            
-            if length(f_zt_day) >= 3
-                [~, p_f_zt] = ttest(f_zt_day, f_zt_night);
-                [~, p_f_ct] = ttest(f_ct_day, f_ct_night);
-                fprintf('  FEMALES (N=%d):\n', length(f_zt_day));
-                fprintf('    Old ZT Method p-value: %.4f\n', p_f_zt);
-                fprintf('    New CT Method p-value: %.4f\n', p_f_ct);
-            end
-            fprintf('======================================================\n');
-            
-        catch ME_Diag
-            warning('ErrGen:Diag','Error Diagnostic: %s', ME_Diag.message);
+% Purpose: Directly answer whether aligning to CT changes the statistical 
+% outcome of DD diurnality compared to standard ZT, highlighting AO5.
+
+if strcmp(current_metric_var, 'SelectedPixelDifference')
+    disp('--- Starting Diagnostic: ZT vs CT in Last Week of Full Dark ---');
+    try
+        % 1. Isolate Last 7 Days of Full Dark
+        fd_data = dataTable(dataTable.Condition == 'FullDark', :);
+        
+        % We need tau_results from Fig 6. If missing, throw error.
+        if ~exist('tau_results', 'var')
+            error('tau_results not found. Run Figure 6A/B first.');
         end
+        
+        m_zt_day = []; m_zt_night = []; m_ct_day = []; m_ct_night = [];
+        f_zt_day = []; f_zt_night = []; f_ct_day = []; f_ct_night = [];
+        
+        ao5_stats = struct(); % Store AO5 specifically for Lily
+        
+        u_ans = unique(fd_data.Animal);
+        for i = 1:length(u_ans)
+            an_id = u_ans(i);
+            d = fd_data(fd_data.Animal == an_id, :);
+            d.Day = floor(d.RelativeDay);
+            max_day = max(d.Day);
+            d_last_week = d(d.Day > (max_day - 7), :); % Last 7 days
+            
+            if isempty(d_last_week), continue; end
+            
+            % Get Tau
+            tau_idx = strcmp({tau_results.Animal}, string(an_id));
+            if ~any(tau_idx), continue; end
+            an_tau = tau_results(tau_idx).Tau;
+            
+            % Calculate CT for last week
+            t_hours = (d_last_week.RelativeDay - min(fd_data.RelativeDay(fd_data.Animal==an_id))) * 24;
+            d_last_week.CT_Hour = floor(mod(t_hours, an_tau) * (24 / an_tau));
+            
+            % --- ZT Averages (Mid-Phase 3-9 vs 15-21) ---
+            zt_day_data = d_last_week.(current_metric_var)(d_last_week.(ztHourVar) >= 3 & d_last_week.(ztHourVar) <= 9);
+            zt_night_data = d_last_week.(current_metric_var)(d_last_week.(ztHourVar) >= 15 & d_last_week.(ztHourVar) <= 21);
+            zt_d_mean = mean(zt_day_data, 'omitnan');
+            zt_n_mean = mean(zt_night_data, 'omitnan');
+            
+            % --- CT Averages (Mid-Phase 3-9 vs 15-21) ---
+            ct_day_data = d_last_week.(current_metric_var)(d_last_week.CT_Hour >= 3 & d_last_week.CT_Hour <= 9);
+            ct_night_data = d_last_week.(current_metric_var)(d_last_week.CT_Hour >= 15 & d_last_week.CT_Hour <= 21);
+            ct_d_mean = mean(ct_day_data, 'omitnan');
+            ct_n_mean = mean(ct_night_data, 'omitnan');
+            
+            % Store AO5
+            if strcmp(string(an_id), "AO5")
+                ao5_stats.zt_day = zt_d_mean; ao5_stats.zt_night = zt_n_mean;
+                ao5_stats.ct_day = ct_d_mean; ao5_stats.ct_night = ct_n_mean;
+            end
+            
+            % Store by Sex
+            if ismember(an_id, maleAnimals)
+                m_zt_day(end+1) = zt_d_mean; m_zt_night(end+1) = zt_n_mean;
+                m_ct_day(end+1) = ct_d_mean; m_ct_night(end+1) = ct_n_mean;
+            elseif ismember(an_id, femaleAnimals)
+                f_zt_day(end+1) = zt_d_mean; f_zt_night(end+1) = zt_n_mean;
+                f_ct_day(end+1) = ct_d_mean; f_ct_night(end+1) = ct_n_mean;
+            end
+        end
+        
+        % --- PRINT DIAGNOSTIC RESULTS ---
+        fprintf('\n======================================================\n');
+        fprintf('  DIAGNOSTIC: ZT vs CT in Last Week of Full Dark\n');
+        fprintf('======================================================\n');
+        
+        fprintf('\n--- AO5 Specific Check (Tau = 23.81) ---\n');
+        if isfield(ao5_stats, 'zt_day')
+            fprintf('  Using Old ZT: Day Mean = %.0f, Night Mean = %.0f\n', ao5_stats.zt_day, ao5_stats.zt_night);
+            fprintf('  Using New CT: Day Mean = %.0f, Night Mean = %.0f\n', ao5_stats.ct_day, ao5_stats.ct_night);
+            pct_diff = abs(ao5_stats.ct_day - ao5_stats.zt_day) / ao5_stats.zt_day * 100;
+            fprintf('  Difference in calculated "Day" activity: %.1f%%\n', pct_diff);
+        else
+            fprintf('  AO5 data not found in this segment.\n');
+        end
+        
+        fprintf('\n--- Population Stats (Paired T-Test: Mid-Day vs Mid-Night) ---\n');
+        
+        if length(m_zt_day) >= 3
+            [~, p_m_zt] = ttest(m_zt_day, m_zt_night);
+            [~, p_m_ct] = ttest(m_ct_day, m_ct_night);
+            fprintf('  MALES (N=%d):\n', length(m_zt_day));
+            fprintf('    Old ZT Method p-value: %.4f\n', p_m_zt);
+            fprintf('    New CT Method p-value: %.4f\n', p_m_ct);
+        end
+        
+        if length(f_zt_day) >= 3
+            [~, p_f_zt] = ttest(f_zt_day, f_zt_night);
+            [~, p_f_ct] = ttest(f_ct_day, f_ct_night);
+            fprintf('  FEMALES (N=%d):\n', length(f_zt_day));
+            fprintf('    Old ZT Method p-value: %.4f\n', p_f_zt);
+            fprintf('    New CT Method p-value: %.4f\n', p_f_ct);
+        end
+        fprintf('======================================================\n');
+        
+    catch ME_Diag
+        warning('ErrGen:Diag','Error Diagnostic: %s', ME_Diag.message);
     end
+end
 else
     disp('Skipping Figure 6 for Normalized Activity.');
 end
